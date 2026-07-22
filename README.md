@@ -109,5 +109,11 @@ and **21.0** (modular). The module is version-aware — `Connect-TiaPortal -Vers
 The user's real project (`E:\TIA_Portal\PPS_SR_\PPS_SR_.ap19`) is **read-only by
 policy**; writes go to a scratch project.
 
-See `docs/openness-cheatsheet.md` for raw Openness idioms and `.claude/skills/tia-openness/`
-for the full skill.
+## Documentation
+
+- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 37-cmdlet reference.
+- **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate).
+- **[docs/framework.md](docs/framework.md)** — generator/architecture design.
+- **[docs/openness-cheatsheet.md](docs/openness-cheatsheet.md)** — raw Openness idioms.
+- **[docs/adding-a-device.md](docs/adding-a-device.md)** — CPU order numbers.
+- Skills: `.claude/skills/tia-openness/`, `.claude/skills/tia-hmi/`.

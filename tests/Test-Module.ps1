@@ -13,13 +13,27 @@ Write-Host "Repo root: $root`n"
 function Check($name, [scriptblock]$test) {
     try {
         $r = & $test
-        if ($r -eq $false) { Write-Host "[FAIL] $name" -ForegroundColor Red; $script:fail++ }
-        else { Write-Host "[ ok ] $name" -ForegroundColor Green }
-    } catch { Write-Host "[FAIL] $name -> $($_.Exception.Message)" -ForegroundColor Red; $script:fail++ }
+        if ($r -eq $false) {
+            Write-Host "[FAIL] $name" -ForegroundColor Red
+            Write-Host "::error::CHECK FAILED: $name"          # GitHub annotation (readable via API)
+            $script:fail++
+        } else { Write-Host "[ ok ] $name" -ForegroundColor Green }
+    } catch {
+        Write-Host "[FAIL] $name -> $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "::error::CHECK ERROR: $name -> $($_.Exception.Message)"
+        $script:fail++
+    }
 }
 
-Import-Module (Join-Path $root 'src\TiaOpenness\TiaOpenness.psd1') -Force
-$cmds = Get-Command -Module TiaOpenness
+try {
+    Import-Module (Join-Path $root 'src\TiaOpenness\TiaOpenness.psd1') -Force -ErrorAction Stop
+} catch {
+    Write-Host "::error::Import-Module failed: $($_.Exception.Message)"
+    Write-Host "IMPORT FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
+$cmds = @(Get-Command -Module TiaOpenness)
+Write-Host "Imported module; exported command count = $($cmds.Count)"
 
 Check "module exports >= 30 commands (got $($cmds.Count))" { $cmds.Count -ge 30 }
 
