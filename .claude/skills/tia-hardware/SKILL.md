@@ -28,7 +28,13 @@ Get-TiaModule -DeviceName PLC_1 | Format-Table Slot, Name, OrderNumber
 ```
 
 Copy the exact `OrderNumber:...` strings into your `modules` spreadsheet. A bare
-`6ES7 ...` is auto-prefixed with `OrderNumber:` by `Add-TiaModule`.
+`6ES7 ...` is auto-prefixed with `OrderNumber:` by `Add-TiaModule`. **The firmware
+suffix (`/V2.1`) is required** - the bare MLFB without it is rejected.
+
+Order numbers verified to plug on this machine's catalog (S7-1500, next to a 515F CPU):
+`6ES7 521-1BH00-0AB0/V2.1` (DI-16), `6ES7 521-1BL00-0AB0/V2.1` (DI-32),
+`6ES7 531-7KF00-0AB0/V2.0` (AI-8), `6ES7 532-5HD00-0AB0/V2.0` (AQ-4). The `522` DQ
+variants tried were not installed - always confirm against your own catalog.
 
 ## How Add-TiaModule works
 
