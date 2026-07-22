@@ -124,4 +124,5 @@ policy**; writes go to a scratch project.
 - **[docs/framework.md](docs/framework.md)** — generator/architecture design.
 - **[docs/openness-cheatsheet.md](docs/openness-cheatsheet.md)** — raw Openness idioms.
 - **[docs/adding-a-device.md](docs/adding-a-device.md)** — CPU order numbers.
-- Skills: `.claude/skills/tia-openness/`, `.claude/skills/tia-hmi/`.
+- Skills (`.claude/skills/`): `tia-openness` (connection), `tia-hardware` (devices/rack), `tia-data` (tags/UDTs/DBs), `tia-programming` (OB/FB/FC), `tia-hmi` (WinCC), `tia-autocode` (spec-driven build).
+- Project instructions: [CLAUDE.md](CLAUDE.md).
