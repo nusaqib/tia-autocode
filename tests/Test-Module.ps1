@@ -153,6 +153,7 @@ Check "New-TiaProjectRepo scaffolds a valid, clean project repo" {
         $yaml = Join-Path $dest 'project.yaml'
         $filesOk = (Test-Path $yaml) -and
                    (Test-Path (Join-Path $dest 'README.md')) -and
+                   (Test-Path (Join-Path $dest 'AUTHORING.md')) -and
                    (Test-Path (Join-Path $dest '.gitignore')) -and
                    (Test-Path (Join-Path $dest '.github\workflows\validate.yml')) -and
                    (Test-Path (Join-Path $dest 'logic\FB_Motor.scl'))

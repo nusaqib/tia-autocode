@@ -14,6 +14,10 @@ git submodule update --init --recursive
 
 ## Author the machine
 
+> **See [AUTHORING.md](AUTHORING.md)** for the full reference: what to specify and in
+> which file (every `project.yaml` field + every CSV column), datatypes/addresses, HMI,
+> naming rules, and how to create another project from the template.
+
 - **Data** in `data/*.csv` - tags, UDTs, DBs (blocks + members), rack modules, HMI tags.
   A workbook works too: reference a sheet as `data/PLC_1.xlsx#Tags`.
 - **Logic** in `logic/*.scl` (FB/FC/OB), or instantiate an engine template in the

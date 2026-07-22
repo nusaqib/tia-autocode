@@ -146,6 +146,7 @@ policy**; writes go to a scratch project.
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — the plan and its status (Phases 0-5, all done): spec-driven project + HMI automation (spreadsheet → CSV/XLSX → generate).
 - **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 55-cmdlet reference.
 - **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate → authoring helpers).
+- **[docs/AUTHORING.md](docs/AUTHORING.md)** — what to specify for a project and in which file (every manifest field + CSV column), plus how to create a new project from the template.
 - **[docs/PROJECT-REPO-GUIDE.md](docs/PROJECT-REPO-GUIDE.md)** — the two-repo strategy and how a private project repo (e.g. `PPS_SR`) links this engine as a submodule.
 - **[docs/framework.md](docs/framework.md)** — generator/architecture design.
 - **[docs/openness-cheatsheet.md](docs/openness-cheatsheet.md)** — raw Openness idioms.
