@@ -85,7 +85,7 @@ hmis:
     tags:    [ data/HMI_1.hmitags.csv ]
     screens: [ hmi/screens/Start.xml ]
 build:
-  order: [ udts, dbs, logic, tags, hmi ]   # dependency order
+  order: [ udts, logic, dbs, tags, hmi ]   # logic before dbs (instance DBs need the FB)
   snapshotDir: generated
   save: false                              # leave unsaved for review (safe default)
 ```
@@ -153,7 +153,8 @@ Logic (FB/FC/OB) stays as SCL files — code belongs in code, not spreadsheets.
    present, datatypes sane, UDT/type references resolve, no duplicate names, addresses
    well-formed, DB member types defined. Fail fast with a clear report.
 3. **Connect** (new/attach) -> create/open project -> add device.
-4. **Generate in order**: UDTs -> DBs -> SCL blocks -> tags -> HMI. Rows are compiled
+4. **Generate in order**: device -> modules -> UDTs -> SCL logic -> DBs -> tags -> HMI
+   (logic precedes DBs so instance DBs resolve their FB). Rows are compiled
    to SCL (`TYPE...END_TYPE`, `DATA_BLOCK...END_DATA_BLOCK`) or API calls, reusing the
    validated cmdlets.
 5. **Compile**; collect errors/warnings.

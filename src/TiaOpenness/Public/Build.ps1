@@ -98,7 +98,15 @@ function Invoke-TiaBuildFromSpec {
                 elseif ($uref.sclFile) { New-TiaType -Plc $sw -Path (Rel $uref.sclFile) | Out-Null; Step "UDT file" }
             }
 
-            # --- DBs (CSV blocks+members -> SCL, or inline) ---
+            # --- logic (SCL files) --- BEFORE DBs so instance DBs find their FB ---
+            foreach ($lref in @($plc.logic) + @($plc.blocks)) {
+                if (-not $lref) { continue }
+                if ($lref -is [string]) { Import-TiaScl -Plc $sw -Path (Rel $lref) | Out-Null; Step "logic $lref" }
+                elseif ($lref.sclFile) { Import-TiaScl -Plc $sw -Path (Rel $lref.sclFile) | Out-Null; Step "logic file" }
+                elseif ($lref.scl) { Import-TiaScl -Plc $sw -Scl $lref.scl | Out-Null; Step "logic (inline)" }
+            }
+
+            # --- DBs (CSV blocks+members -> SCL, or inline) - after logic ---
             if ($plc.dbs -and $plc.dbs.blocks) {
                 $blocks  = Rows $plc.dbs.blocks
                 $members = if ($plc.dbs.members) { Rows $plc.dbs.members } else { @() }
@@ -113,14 +121,6 @@ function Invoke-TiaBuildFromSpec {
                 if ($db.ofType) { New-TiaDataBlock -Plc $sw -Name $db.name -OfType $db.ofType | Out-Null }
                 elseif ($db.scl) { New-TiaDataBlock -Plc $sw -Scl $db.scl | Out-Null }
                 Step "DB $($db.name) (inline)"
-            }
-
-            # --- logic (SCL files) ---
-            foreach ($lref in @($plc.logic) + @($plc.blocks)) {
-                if (-not $lref) { continue }
-                if ($lref -is [string]) { Import-TiaScl -Plc $sw -Path (Rel $lref) | Out-Null; Step "logic $lref" }
-                elseif ($lref.sclFile) { Import-TiaScl -Plc $sw -Path (Rel $lref.sclFile) | Out-Null; Step "logic file" }
-                elseif ($lref.scl) { Import-TiaScl -Plc $sw -Scl $lref.scl | Out-Null; Step "logic (inline)" }
             }
 
             # --- tags (CSV rows or inline objects) ---

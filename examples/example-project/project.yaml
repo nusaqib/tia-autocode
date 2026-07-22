@@ -23,6 +23,6 @@ plcs:
       - logic/FB_MotorStarter.scl
     compile: true
 build:
-  order: [udts, dbs, logic, tags]
+  order: [udts, logic, dbs, tags]   # logic before dbs so instance DBs find their FB
   snapshotDir: generated
   save: false
