@@ -17,7 +17,8 @@
         'Get-TiaType','New-TiaType','New-TiaDataBlock',
         'New-TiaBlockGroup','Get-TiaBlockGroup','Remove-TiaBlock','New-TiaOb',
         'Get-TiaHmi','Show-TiaHmiApi','Get-TiaScreen','Export-TiaScreen','Import-TiaScreen',
-        'Invoke-TiaBuildFromSpec'
+        'Invoke-TiaBuildFromSpec',
+        'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
