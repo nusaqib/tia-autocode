@@ -1,0 +1,8 @@
+# Generated project + build snapshots - never commit these.
+_out/
+**/_out/
+generated/
+**/generated/
+*.ap1?
+*.ap2?
+*.bak

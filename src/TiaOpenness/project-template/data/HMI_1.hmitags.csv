@@ -1,0 +1,3 @@
+Name,DataType,Connection,PLCTag,Acquisition,Comment,TagTable
+MotorSpeed,Real,HMI_Connection_1,"""Settings_DB"".MaxSpeed",1 s,speed setpoint,Status
+LineSpeed,Int,HMI_Connection_1,LineSpeed,1 s,line speed,Status

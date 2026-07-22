@@ -1,0 +1,3 @@
+DBName,Number,Kind,OfType,Optimized,Comment
+Settings_DB,,Global,,TRUE,tunable settings
+Motor_DB,,InstanceOfFB,FB_Motor,TRUE,motor instance data

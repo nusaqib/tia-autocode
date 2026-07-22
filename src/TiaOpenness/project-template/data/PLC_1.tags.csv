@@ -1,0 +1,5 @@
+TagTable,Name,DataType,Address,Comment,Retain
+IO,StartButton,Bool,%I0.0,cycle start,FALSE
+IO,StopButton,Bool,%I0.1,cycle stop,FALSE
+IO,MotorRun,Bool,%Q0.0,motor output,FALSE
+Memory,LineSpeed,Int,%MW10,line speed setpoint,FALSE

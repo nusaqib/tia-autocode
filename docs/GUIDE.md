@@ -276,6 +276,24 @@ device → modules → UDTs → logic → DBs → tags → compile → HMI (tags
 save. Keep specs in git
 as the source of truth; regenerate any time.
 
+### 10.0 Start a new machine repo (Phase 5)
+
+Scaffold a private, per-machine repo that consumes this engine as a submodule:
+
+```powershell
+New-TiaProjectRepo -Path C:\work\Line5 -Name Line5
+cd C:\work\Line5
+git init
+git submodule add https://github.com/nusaqib/tia-autocode.git engine
+git submodule update --init --recursive
+powershell -ExecutionPolicy Bypass -File .\validate.ps1   # offline, no TIA
+powershell -ExecutionPolicy Bypass -File .\build.ps1      # needs TIA Portal
+```
+
+You get a ready manifest, starter `data/*.csv` + `logic/*.scl`, `build.ps1`/`validate.ps1`,
+a `.gitignore`, and an offline-validation GitHub Actions workflow. Edit the data/logic,
+keep `validate.ps1` green in CI, and build when you are on a TIA machine.
+
 ### 10.1 Authoring helpers (Phase 4)
 
 **Author in Excel, not just CSV.** Anywhere a spec references a `.csv`, you can point at

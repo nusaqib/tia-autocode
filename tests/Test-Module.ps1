@@ -143,6 +143,27 @@ Check "Test-TiaSpec resolves an instance DB of a template-generated FB" {
     $r.Ok -and $r.Errors.Count -eq 0
 }
 
+# Phase 5: project-repo scaffolding. Scaffold to a temp dir, check token replacement +
+# key files, and confirm the generated spec validates clean; then clean up.
+Check "New-TiaProjectRepo scaffolds a valid, clean project repo" {
+    $dest = Join-Path ([System.IO.Path]::GetTempPath()) 'tia-scaffold-test'
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    try {
+        New-TiaProjectRepo -Path $dest -Name 'Line5' | Out-Null
+        $yaml = Join-Path $dest 'project.yaml'
+        $filesOk = (Test-Path $yaml) -and
+                   (Test-Path (Join-Path $dest 'README.md')) -and
+                   (Test-Path (Join-Path $dest '.gitignore')) -and
+                   (Test-Path (Join-Path $dest '.github\workflows\validate.yml')) -and
+                   (Test-Path (Join-Path $dest 'logic\FB_Motor.scl'))
+        $content = Get-Content $yaml -Raw
+        $tokenOk = ($content -match 'name:\s*Line5') -and ($content -notmatch '\{\{MachineName\}\}')
+        $r = Test-TiaSpec -Path $yaml
+        if (-not $r.Ok) { Write-Host "    errors: $($r.Errors -join '; ')" -ForegroundColor Red }
+        $filesOk -and $tokenOk -and $r.Ok -and $r.Errors.Count -eq 0
+    } finally { if (Test-Path $dest) { Remove-Item $dest -Recurse -Force } }
+}
+
 # Phase 3: HMI spec validation (offline).
 Check "HMI spec fixture validates clean" {
     $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\hmi-spec\project.yaml')

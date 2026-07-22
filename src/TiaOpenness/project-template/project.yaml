@@ -1,0 +1,44 @@
+# {{MachineName}} - TIA project spec. The tia-autocode engine is consumed as a git
+# submodule at engine/. Author data in data/*.csv (or an .xlsx#Sheet), logic in
+# logic/*.scl (or engine templates), then: validate.ps1 (offline) / build.ps1 (needs TIA).
+project:
+  name: {{MachineName}}
+  path: _out/{{MachineName}}          # relative to this file; gitignored
+portal:
+  new: true                           # start our own headless instance for writes
+  ui: false
+plcs:
+  - name: PLC_1
+    orderNumber: "OrderNumber:6ES7 515-2FM02-0AB0/V2.9"   # <- set your CPU MLFB + firmware
+    modules:
+      - data/PLC_1.modules.csv
+    udts:
+      - data/PLC_1.udts.csv
+    logic:
+      - logic/FB_Motor.scl
+      # - { template: MotorStarter, params: { Name: FB_Conveyor } }   # engine template
+    dbs:
+      blocks: data/PLC_1.dbs.blocks.csv
+      members: data/PLC_1.dbs.members.csv
+    tags:
+      - data/PLC_1.tags.csv
+      # - data/PLC_1.xlsx#Tags        # workbooks work too (any sheet)
+    compile: true
+hmis:
+  - name: HMI_1
+    orderNumber: "OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0"   # KTP700 Comfort; set yours
+    deviceItemName: "KTP700 Comfort"
+    tags:
+      - data/HMI_1.hmitags.csv
+naming:                               # optional lint; violations surface as warnings
+  tags:
+    case: Pascal
+  udts:
+    prefix: UDT_
+  fbs:
+    prefix: FB_
+  dbs:
+    suffix: _DB
+build:
+  snapshotDir: generated
+  save: true

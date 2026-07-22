@@ -106,6 +106,7 @@ src/TiaOpenness/
 | **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Authoring (Phase 4)** | XLSX workbook import; naming-convention lint; reusable SCL/UDT templates | `Import-TiaXlsx`, `Test-TiaNaming`, `Get-/Expand-TiaTemplate` | ✅ offline-tested; xlsx-build + template-build validated live (compile 0 errors) |
+| **Project repo (Phase 5)** | Scaffold a private machine repo (submodule wiring, build/validate scripts, offline CI) | `New-TiaProjectRepo` | ✅ scaffold + generated-spec validation self-tested |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
 
 Legend: ✅ validated end-to-end against the live V19 session (2026-07-21) ·
@@ -212,6 +213,10 @@ Common conventions:
   (`{{Token}}` placeholders + `@param name[=default]` metadata). Built-ins: MotorStarter
   (FB), AnalogScale (FC), CommandStatus (UDT). In a spec, a `logic` entry may be
   `{ template, params }`.
+- **`New-TiaProjectRepo -Path -Name [-Force]`** → scaffolds a new private project repo
+  from the built-in `project-template` (manifest, data CSVs, logic, `build.ps1`/
+  `validate.ps1`, offline-validation CI, `.gitignore`, README), filling in the machine
+  name. Offline; returns the submodule/next-step commands.
 
 ---
 

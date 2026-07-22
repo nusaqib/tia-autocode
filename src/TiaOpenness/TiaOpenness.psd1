@@ -23,7 +23,8 @@
         'Invoke-TiaBuildFromSpec','Export-TiaToSpec','Import-TiaXlsx',
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',
         'Test-TiaSpec','Test-TiaNaming',
-        'Get-TiaTemplate','Expand-TiaTemplate'
+        'Get-TiaTemplate','Expand-TiaTemplate',
+        'New-TiaProjectRepo'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

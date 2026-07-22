@@ -14,6 +14,11 @@ See `docs/ROADMAP.md` (plan + contracts) and `examples/example-project/` (workin
 - **Project repos** (private, one per machine): the specs, consuming the engine as a
   **git submodule**. Customer data never lives in the engine.
 
+Scaffold a project repo with **`New-TiaProjectRepo -Path .\my-machine -Name MyMachine`**:
+it copies the built-in `project-template` (manifest, starter data/logic, `build.ps1`,
+`validate.ps1`, offline-validation CI, `.gitignore`, README) and fills in the name, then
+prints the `git submodule add ... engine` steps. Offline.
+
 ## Workflow
 
 1. Author tabular data in **Google Sheets**, then `File -> Download -> CSV` per tab into

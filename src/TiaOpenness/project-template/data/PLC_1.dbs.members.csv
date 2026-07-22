@@ -1,0 +1,3 @@
+DBName,Member,DataType,StartValue,Retain,Comment
+Settings_DB,MaxSpeed,Real,1500.0,FALSE,max line speed
+Settings_DB,Motor1,UDT_Motor,,FALSE,motor 1 data

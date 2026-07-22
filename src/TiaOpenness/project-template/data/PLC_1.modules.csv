@@ -1,0 +1,4 @@
+Slot,OrderNumber,Name,Comment
+2,6ES7 521-1BH00-0AB0/V2.1,DI_16x24VDC,digital inputs
+3,6ES7 531-7KF00-0AB0/V2.0,AI_8xU_I_RTD_TC,analog inputs
+4,6ES7 532-5HD00-0AB0/V2.0,AQ_4xU_I,analog outputs
