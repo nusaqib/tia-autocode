@@ -1,5 +1,5 @@
-# Test-Module.ps1
-# Offline structural self-test — runs WITHOUT a TIA connection or the Openness group.
+﻿# Test-Module.ps1
+# Offline structural self-test - runs WITHOUT a TIA connection or the Openness group.
 # Validates that the module loads, every exported function has comment-based help and
 # resolves, the manifest and loader agree, and the demo spec matches the schema the
 # generator expects. Exits non-zero on failure (CI-friendly).
@@ -46,7 +46,7 @@ Check "manifest FunctionsToExport matches exported set" {
 }
 
 # Every public function should carry comment-based help (documentation discipline).
-# Inspect the function definition text directly — deterministic and independent of
+# Inspect the function definition text directly - deterministic and independent of
 # the Get-Help subsystem / help-file state on the host.
 foreach ($c in $cmds) {
     Check "help: $($c.Name) has a .SYNOPSIS" {
@@ -64,6 +64,23 @@ foreach ($n in $core) { Check "core cmdlet present: $n" { [bool](Get-Command $n 
 Check "specs/demo.json parses and has plcs[0].tagTables[0].tags" {
     $s = Get-Content (Join-Path $root 'specs\demo.json') -Raw | ConvertFrom-Json
     $s.plcs -and $s.plcs[0].tagTables[0].tags.Count -ge 1 -and $s.project.name
+}
+
+# Source must be ASCII-only: Windows PowerShell 5.1 reads BOM-less .ps1 as the ANSI
+# code page, so a stray em-dash/smart-quote breaks parsing (this exact bug failed CI).
+Check "PowerShell sources are ASCII-only" {
+    $offenders = @()
+    Get-ChildItem $root -Recurse -Include *.ps1,*.psm1,*.psd1 | ForEach-Object {
+        $n = 0
+        foreach ($line in [System.IO.File]::ReadAllLines($_.FullName)) {
+            $n++
+            if ($line -match '[^\x00-\x7F]') {
+                $offenders += "$($_.Name):$n"
+            }
+        }
+    }
+    if ($offenders.Count) { Write-Host "    non-ASCII at: $($offenders -join ', ')" -ForegroundColor Red }
+    $offenders.Count -eq 0
 }
 
 # Version detection works offline (reads registry only, no Attach). Skipped on

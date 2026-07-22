@@ -1,4 +1,4 @@
-# Demo-ScratchWrites.ps1
+﻿# Demo-ScratchWrites.ps1
 # End-to-end WRITE demo against a throwaway project (never your real project).
 # Requires membership in the 'Siemens TIA Openness' group (see Enable-OpennessAccess.ps1).
 #
@@ -42,7 +42,7 @@ New-TiaTag -Plc $sw -TagTable 'IO' -Name 'Stop_PB'   -DataType 'Bool' -Address '
 New-TiaTag -Plc $sw -TagTable 'IO' -Name 'Motor_Run' -DataType 'Bool' -Address '%Q0.0' | Out-Null
 Get-TiaTag -Plc $sw -TagTable 'IO' | Format-Table Name, DataType, Address -AutoSize
 
-# 4) Create a FUNCTION (FC) from SCL — a reusable scaling routine.
+# 4) Create a FUNCTION (FC) from SCL - a reusable scaling routine.
 Write-Host "Importing SCL function 'Scale'..." -ForegroundColor Cyan
 Import-TiaScl -Plc $sw -Scl @'
 FUNCTION "Scale" : Real
@@ -58,7 +58,7 @@ BEGIN
 END_FUNCTION
 '@ | Out-Null
 
-# 5) Create a FUNCTION_BLOCK (FB) from SCL — a motor starter with seal-in.
+# 5) Create a FUNCTION_BLOCK (FB) from SCL - a motor starter with seal-in.
 Write-Host "Importing SCL function block 'MotorStarter'..." -ForegroundColor Cyan
 Import-TiaScl -Plc $sw -Scl @'
 FUNCTION_BLOCK "MotorStarter"

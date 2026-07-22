@@ -1,4 +1,4 @@
-# Organization.ps1 — block/tag folder groups and block lifecycle helpers.
+﻿# Organization.ps1 - block/tag folder groups and block lifecycle helpers.
 
 function New-TiaBlockGroup {
     <#

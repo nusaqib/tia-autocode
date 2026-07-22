@@ -1,4 +1,4 @@
-# Hmi.ps1 — WinCC HMI access (Comfort/Advanced HmiTarget and Unified).
+﻿# Hmi.ps1 - WinCC HMI access (Comfort/Advanced HmiTarget and Unified).
 # HMI Openness varies by WinCC flavor, so this layer is discovery-first: it finds
 # HMI software, enumerates screens, round-trips screen XML (the supported authoring
 # path), and exposes a reflection helper to reveal the exact collections available.

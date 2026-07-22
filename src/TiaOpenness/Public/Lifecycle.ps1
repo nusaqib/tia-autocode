@@ -1,9 +1,9 @@
-# Lifecycle.ps1 — backup / round-trip export and (guarded) download to a CPU.
+﻿# Lifecycle.ps1 - backup / round-trip export and (guarded) download to a CPU.
 
 function Export-TiaProgram {
     <#
     .SYNOPSIS
-        Exports every PLC block (and optionally tags/types) to SimaticML XML — a
+        Exports every PLC block (and optionally tags/types) to SimaticML XML - a
         text, diffable, version-controllable snapshot of the program.
     .PARAMETER OutDir
         Destination folder (created if missing). Blocks go to <OutDir>\Blocks.
@@ -69,7 +69,7 @@ function Invoke-TiaDownload {
     .DESCRIPTION
         Guarded by ShouldProcess (-WhatIf/-Confirm). Requires an established online
         connection (real CPU or PLCSIM). Compile first with Invoke-TiaCompile. Only
-        run against a target you intend to change — never a production CPU casually.
+        run against a target you intend to change - never a production CPU casually.
     .PARAMETER Force
         Skip the interactive confirmation (still honors -WhatIf).
     #>
@@ -82,7 +82,7 @@ function Invoke-TiaDownload {
     $dp = [Siemens.Engineering.Download.DownloadProvider]
     $mi = [Siemens.Engineering.IEngineeringServiceProvider].GetMethod('GetService').MakeGenericMethod($dp)
     $provider = $mi.Invoke($sw, $null)
-    if (-not $provider) { throw "No DownloadProvider — is this device online-capable and connected?" }
+    if (-not $provider) { throw "No DownloadProvider - is this device online-capable and connected?" }
 
     # Default configuration/post-download delegates: proceed with library defaults.
     $preConf  = [Siemens.Engineering.Download.Configuration.DownloadConfiguration]

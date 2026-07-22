@@ -1,4 +1,4 @@
-# Types.ps1 — PLC data types (UDTs) and data blocks (global/instance), via SCL sources.
+﻿# Types.ps1 - PLC data types (UDTs) and data blocks (global/instance), via SCL sources.
 # UDTs and DBs are most reliably authored as SCL text (TYPE...END_TYPE / DATA_BLOCK)
 # and generated into the project, mirroring how Import-TiaScl handles code blocks.
 

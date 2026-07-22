@@ -1,4 +1,4 @@
-# Build.ps1 — declarative project generator.
+﻿# Build.ps1 - declarative project generator.
 # Turn a JSON/hashtable spec into a materialized TIA program: project -> device(s)
 # -> tags -> UDTs -> code blocks -> data blocks -> compile, and optional HMI screens.
 # This is the "automatic coding platform" entry point.

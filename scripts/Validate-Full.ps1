@@ -1,4 +1,4 @@
-# Validate-Full.ps1
+﻿# Validate-Full.ps1
 # Comprehensive, self-logging validation. Launch under a FRESH logon token (runas)
 # so the client process carries the 'Siemens TIA Openness' group:
 #
@@ -50,7 +50,7 @@ try {
 }
 
 # ------------------------------------------------------------- write path (our own)
-Section 'WRITE PATH — dedicated headless Portal + scratch project'
+Section 'WRITE PATH - dedicated headless Portal + scratch project'
 $writeOk = $false
 try {
     Connect-TiaPortal -New -WithUserInterface:$false | Out-Null
@@ -124,7 +124,7 @@ END_FUNCTION_BLOCK
 }
 
 Section 'SUMMARY'
-Write-Host ("Write-path validation: {0}" -f ($(if($writeOk){'PASSED'}else{'INCOMPLETE — see log'})))
+Write-Host ("Write-path validation: {0}" -f ($(if($writeOk){'PASSED'}else{'INCOMPLETE - see log'})))
 Stop-Transcript | Out-Null
 Write-Host "`nLog: $log"
 Start-Sleep -Seconds 3

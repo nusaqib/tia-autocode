@@ -1,4 +1,4 @@
-# Tags.ps1 — PLC tag tables and tags (read + create).
+﻿# Tags.ps1 - PLC tag tables and tags (read + create).
 
 function Get-TiaTagTable {
     <#

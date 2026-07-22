@@ -1,4 +1,4 @@
-# TiaOpenness.psm1 — module loader.
+﻿# TiaOpenness.psm1 - module loader.
 # Dot-sources Private (helpers) then Public (exported commands).
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path

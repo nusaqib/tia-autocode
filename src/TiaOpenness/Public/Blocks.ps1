@@ -1,4 +1,4 @@
-# Blocks.ps1 — PLC logic blocks (OB/FB/FC/DB): read, create from SCL, import XML, export, compile.
+﻿# Blocks.ps1 - PLC logic blocks (OB/FB/FC/DB): read, create from SCL, import XML, export, compile.
 
 function Get-TiaBlock {
     <#
