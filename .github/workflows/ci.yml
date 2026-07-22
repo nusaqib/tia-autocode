@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  structural-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run offline module self-test (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\tests\Test-Module.ps1

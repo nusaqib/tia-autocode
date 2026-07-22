@@ -60,6 +60,17 @@ Invoke-TiaCompile
 Save-TiaProject
 ```
 
+## Tests
+
+`tests\Test-Module.ps1` is an offline structural self-test (no TIA connection or
+Openness group needed): module loads, manifest ⇄ exports agree, every cmdlet has
+help, core cmdlets present, and `specs\demo.json` matches the generator schema. It
+runs in CI (`.github/workflows/ci.yml`, `windows-latest`) on every push.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\Test-Module.ps1
+```
+
 ## Demos
 
 - `scripts\Demo-ReadLiveProject.ps1` — read-only tour of whatever session is running.
