@@ -38,25 +38,56 @@ import it. Commit the screen XML to git for versioning and diffing.
 
 ## HMI tags & connections
 
-These live under HMI-flavor-specific collections (e.g. `TagFolder`, `Connections` on a
-Comfort `HmiTarget`). Because names vary, reach them via the discovered object:
+Tags and connections live under HMI-flavor-specific collections (`TagFolder`,
+`Connections` on a Comfort `HmiTarget`). The module wraps them **discovery-first** -
+each cmdlet locates the real member on THIS install rather than hardcoding a path:
 
 ```powershell
-$hmi = (Get-TiaHmi -Name HMI_1).HmiSoftware
-$hmi.TagFolder.Tags          # confirm the member name first with Show-TiaHmiApi
+Get-TiaHmiConnection -Hmi HMI_1                     # list connections to the PLC
+Get-TiaHmiTag        -Hmi HMI_1                      # list HMI tags across tables
+New-TiaHmiTag -Hmi HMI_1 -Name MotorSpeed -DataType Real `
+              -Connection HMI_Connection_1 -PlcTag '"Motor1_DB".Speed' -TagTable Motors
+New-TiaHmiTag -Hmi HMI_1 -Name LocalCount -DataType Int   # internal (no -Connection)
 ```
 
-If a stable, tested wrapper is needed, add `New-TiaHmiTag` / `Get-TiaHmiConnection`
-to `src/TiaOpenness/Public/Hmi.ps1` using the exact members `Show-TiaHmiApi` reports,
-then export them in `TiaOpenness.psd1`.
+`New-TiaHmiTag` finds the tag collection, calls `Create(name)`, then sets whichever of
+`DataTypeName`/`Connection`/`PlcTag`/`Comment`/`AcquisitionCycleName` exist on this
+flavor. If the members do not match (e.g. Unified), it throws with a hint to run
+`Show-TiaHmiApi` and author the tag table as XML instead.
+
+## Tag tables & alarms - XML round-trip too
+
+For anything the flat CSV cannot express, use the schema-exact XML path (same pattern
+as screens):
+
+```powershell
+Export-TiaHmiTagTable -Hmi HMI_1 -Name Motors  -Path .\Motors.xml -Overwrite
+Import-TiaHmiTagTable -Hmi HMI_1 -Path .\Motors.xml -Overwrite
+Export-TiaHmiAlarms   -Hmi HMI_1 -Kind Discrete -Path .\DiscreteAlarms.xml -Overwrite
+Import-TiaHmiAlarms   -Hmi HMI_1 -Kind Discrete -Path .\DiscreteAlarms.xml -Overwrite
+```
 
 ## In the declarative build
 
-`Invoke-TiaBuildFromSpec` supports an `hmis` section that imports screen XML:
+`Invoke-TiaBuildFromSpec` `hmis` section drives HMI tags (CSV), connections, tag-table
+XML, alarms, and screens:
 
-```json
-"hmis": [{ "name": "HMI_1", "screens": [{ "importXml": "screens\\Start.xml" }] }]
+```yaml
+hmis:
+  - name: HMI_1
+    tags:         [ data/HMI_1.hmitags.csv ]   # CSV -> New-TiaHmiTag
+    tagTablesXml: [ hmi/tags/Motors.xml ]      # schema-exact (optional)
+    alarms:       [ { kind: Discrete, importXml: hmi/DiscreteAlarms.xml } ]
+    screens:      [ hmi/screens/Start.xml ]
 ```
+
+`Test-TiaSpec` validates the `hmis` section offline: hmitags columns (Name + DataType
+required), duplicate-name detection, Connection-without-PLCTag warning, and that every
+referenced screen/alarm/tag-table XML exists.
+
+> Live HMI is flavor-dependent and these wrappers are reflection-based; validate against
+> a scratch HMI before running them on anything real. Offline `Test-TiaSpec` coverage is
+> in `tests/fixtures/hmi-spec/`.
 
 ## Safety
 

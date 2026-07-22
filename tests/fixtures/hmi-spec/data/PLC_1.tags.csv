@@ -1,0 +1,2 @@
+TagTable,Name,DataType,Address,Comment,Retain
+Default tag table,LineState,Int,%MW10,Overall line state,FALSE

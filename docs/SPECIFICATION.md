@@ -102,7 +102,7 @@ src/TiaOpenness/
 | **Logic blocks** | FC/FB/OB from SCL text or `.scl`; SimaticML XML import; export | `Import-TiaScl`, `New-TiaOb`, `Import-TiaBlockXml`, `Export-TiaBlock`, `Get-TiaBlock` | ✅ validated (imported FC+FB; read blocks) |
 | **Compile** | Compile a block or whole PLC; structured result | `Invoke-TiaCompile` | ✅ validated (0 errors / 0 warnings) |
 | **Organization** | Nested block folders; delete blocks | `New-/Get-TiaBlockGroup`, `Remove-TiaBlock` | ☑ implemented |
-| **HMI** | Discover HMI software; introspect API; screens list + XML round-trip | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen` | ☑ implemented (needs a live HMI to validate) |
+| **HMI** | Discover HMI software; introspect API; screens/tag-tables/alarms XML round-trip; tags + connections | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ☑ implemented (offline-tested; needs a live HMI to validate) |
 | **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
@@ -176,6 +176,12 @@ Common conventions:
 - **`Show-TiaHmiApi [-Hmi]`** → reflection dump of the HMI object's properties/collections.
 - **`Get-TiaScreen [-Name] [-Hmi]`** → screens (recursive).
 - **`Export-TiaScreen -Name -Path [-Overwrite] [-Hmi]`** / **`Import-TiaScreen -Path [-Overwrite] [-Hmi]`**.
+- **`Get-TiaHmiConnection [-Name] [-Hmi]`** → connections `{Name, Type, Connection}`.
+- **`Get-TiaHmiTag [-Name] [-TagTable] [-Hmi]`** → HMI tags across tables.
+- **`New-TiaHmiTag -Name [-DataType] [-Connection] [-PlcTag] [-Address] [-Acquisition] [-Comment] [-TagTable] [-Hmi]`**
+  → creates/updates an HMI tag (discovery-first; internal tag when `-Connection` omitted).
+- **`Export-/Import-TiaHmiTagTable`** and **`Export-/Import-TiaHmiAlarms -Kind Discrete|Analog`**
+  → schema-exact SimaticML round-trip for tag tables and alarms.
 
 ### 5.9 Lifecycle
 - **`Export-TiaProgram -OutDir [-IncludeTags] [-Plc]`** → export every block (and
@@ -218,14 +224,18 @@ Common conventions:
                     { "scl":"DATA_BLOCK \"Settings\" ... END_DATA_BLOCK" } ],
     "compile": true
   }],
-  "hmis": [ { "name":"HMI_1", "screens":[ { "importXml":"screens\\Start.xml" } ] } ],
+  "hmis": [ { "name":"HMI_1",
+              "tags":["data\\HMI_1.hmitags.csv"],
+              "alarms":[ { "kind":"Discrete", "importXml":"hmi\\DiscreteAlarms.xml" } ],
+              "screens":[ { "importXml":"screens\\Start.xml" } ] } ],
   "save": true
 }
 ```
 
-Execution order: portal → project → for each PLC (device → tagTables → types →
-blocks → dataBlocks → compile) → for each HMI (screens) → save. Relative paths
-resolve against `-BaseDir` (defaults to the spec file's folder).
+Execution order: portal → project → for each PLC (device → modules → UDTs → logic →
+DBs → tags → compile → snapshot) → for each HMI (tagTablesXml → tags CSV → alarms →
+screens) → save. Relative paths resolve against `-BaseDir` (defaults to the spec
+file's folder).
 
 ---
 
@@ -258,14 +268,15 @@ Current limitations:
   compile, 0 errors). Remaining items below are the not-yet-live-exercised pieces.
 - **`Invoke-TiaDownload`** pre/post delegates are a scaffold - real downloads may need
   per-configuration decisions (stop modules, overwrite) tailored to the setup.
-- **HMI tag/connection wrappers** are intentionally not shipped as fixed cmdlets
-  because collection names vary by WinCC flavor; use `Show-TiaHmiApi` then add tested
-  wrappers.
+- **HMI tag/connection cmdlets** (`Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`,
+  `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms`) ship and are
+  offline-tested, but are **reflection-based** (WinCC collection names vary by flavor)
+  and **not yet exercised against a live HMI** - validate on a scratch panel first.
 - **SimaticML XML** authoring is schema/version-specific; export a real block to learn
   the exact shape.
 
 Roadmap candidates:
-- Tested HMI tag/connection cmdlets once a live HMI is available.
+- Live-validate the HMI tag/connection/alarm cmdlets against a real Comfort/Unified panel.
 - LAD/FBD network builders emitting SimaticML.
 - PLCSIM integration for automated compile+download+test loops.
 - Safety (F) program helpers via `Siemens.Engineering.Safety`.

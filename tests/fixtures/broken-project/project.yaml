@@ -12,3 +12,9 @@ plcs:
     dbs:
       blocks: data/dbs.blocks.csv
     logic: []
+hmis:
+  - name: HMI_1
+    tags:
+      - data/hmitags.csv          # missing DataType + duplicate name (must error)
+    screens:
+      - hmi/DoesNotExist.xml       # missing file (must error)

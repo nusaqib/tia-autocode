@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder discrete-alarms XML for offline Test-TiaSpec coverage.
+     Real alarms come from Export-TiaHmiAlarms against a live HMI, then edited. -->
+<Document></Document>

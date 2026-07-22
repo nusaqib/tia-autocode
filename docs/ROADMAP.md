@@ -82,8 +82,10 @@ plcs:
     compile: true
 hmis:
   - name: HMI_1
-    tags:    [ data/HMI_1.hmitags.csv ]
-    screens: [ hmi/screens/Start.xml ]
+    tags:         [ data/HMI_1.hmitags.csv ]       # CSV -> New-TiaHmiTag
+    tagTablesXml: [ hmi/tags/Motors.xml ]          # schema-exact tag table (optional)
+    alarms:       [ { kind: Discrete, importXml: hmi/DiscreteAlarms.xml } ]
+    screens:      [ hmi/screens/Start.xml ]
 build:
   order: [ udts, logic, dbs, tags, hmi ]   # logic before dbs (instance DBs need the FB)
   snapshotDir: generated
@@ -136,11 +138,18 @@ build:
 | Column | Req | Notes |
 |---|---|---|
 | Name | yes | |
-| Connection | yes | HMI connection name |
-| PLCTag | yes | source PLC tag / DB member |
-| DataType | yes | |
-| Acquisition | no | cycle |
+| DataType | yes | Bool, Int, Real, ... |
+| Connection | no | HMI connection name; blank = internal (non-connected) tag |
+| PLCTag | when Connection set | source PLC tag / DB member (e.g. `"Motor1_DB".Speed`) |
+| Acquisition | no | acquisition cycle name (e.g. `1 s`) |
 | Comment | no | |
+| TagTable | no | target HMI tag table (created if missing); default table otherwise |
+
+HMI tags are created with `New-TiaHmiTag` (discovery-first: it locates the tag
+collection for this WinCC flavor and sets the members that exist). Screens, HMI tag
+tables, and alarms also round-trip as **SimaticML XML** via `Export/Import-TiaScreen`,
+`Export/Import-TiaHmiTagTable`, and `Export/Import-TiaHmiAlarms` - the schema-exact path
+for anything the flat CSV cannot express.
 
 Logic (FB/FC/OB) stays as SCL files — code belongs in code, not spreadsheets.
 
@@ -183,7 +192,7 @@ existing machine (e.g. `PPS_SR_`) into the spec model and diff future changes.
 | **0** | Manifest schema + CSV column contracts + `Test-TiaSpec` offline validator + example project skeleton + tests/CI | No | ✅ done |
 | **1** | CSV readers + UDT/DB/tag/module synthesizers + manifest-driven `Invoke-TiaBuildFromSpec` + `generated/` snapshots | Yes | ✅ done (compiles 0/0 live) |
 | **2** | `Export-TiaToSpec` (reverse adoption): tags/modules CSV + UDT/block XML + rebuildable manifest; `typesXml`/`blocksXml` round-trip import | Yes | ✅ done |
-| **3** | HMI tags + connections + parameterized screens + alarms | Yes | planned |
+| **3** | HMI tags (CSV) + connections + screen/tag-table/alarm XML round-trip, wired into the build + `Test-TiaSpec` | Yes | done (offline-tested; live HMI validation pending a panel device) |
 | **4** | Optional XLSX-workbook import, naming-convention lint, reusable UDT/SCL template library | Mixed | planned |
 | **5** | Private project-repo template (submodule wiring, `build.ps1`, offline-validation CI) + docs | No | planned |
 

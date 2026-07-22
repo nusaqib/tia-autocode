@@ -1,0 +1,4 @@
+Name,Connection,PLCTag,DataType,Comment
+Alarm1,HMI_Connection_1,"""DB"".A",Bool,ok
+Alarm1,HMI_Connection_1,"""DB"".B",Bool,duplicate name
+NoType,HMI_Connection_1,,,missing datatype

@@ -230,6 +230,22 @@ Export-TiaScreen -Hmi HMI_1 -Name Start -Path .\Start.xml   # template / backup
 Import-TiaScreen -Hmi HMI_1 -Path .\Start.xml -Overwrite
 ```
 
+Tags and connections (discovery-first wrappers):
+
+```powershell
+Get-TiaHmiConnection -Hmi HMI_1
+Get-TiaHmiTag        -Hmi HMI_1
+New-TiaHmiTag -Hmi HMI_1 -Name MotorSpeed -DataType Real `
+              -Connection HMI_Connection_1 -PlcTag '"Motor1_DB".Speed' -TagTable Motors
+```
+
+Tag tables and alarms also round-trip as XML (`Export-/Import-TiaHmiTagTable`,
+`Export-/Import-TiaHmiAlarms -Kind Discrete|Analog`). In a spec, the `hmis` section
+drives all of this: `tags` (CSV), `tagTablesXml`, `alarms`, `screens`.
+
+> These HMI wrappers are reflection-based (WinCC flavors differ); validate against a
+> scratch panel before touching anything live.
+
 See the `tia-hmi` skill for details.
 
 ---
@@ -246,7 +262,8 @@ $result.Errors        # per-item failures collected here (build doesn't abort)
 ```
 
 This is the fastest path from "nothing" to a compiled program: portal → project →
-device → tags → UDTs → blocks → DBs → compile → HMI screens → save. Keep specs in git
+device → modules → UDTs → logic → DBs → tags → compile → HMI (tags/alarms/screens) →
+save. Keep specs in git
 as the source of truth; regenerate any time.
 
 ---

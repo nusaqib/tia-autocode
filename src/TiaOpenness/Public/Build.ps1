@@ -161,10 +161,43 @@ function Invoke-TiaBuildFromSpec {
         } catch { Fail "PLC '$($plc.name)': $($_.Exception.Message)" }
     }
 
-    # HMIs (screen XML import)
+    # HMIs (tags CSV -> New-TiaHmiTag; tag-table/alarm/screen XML round-trip)
     foreach ($hmi in @($Spec.hmis)) {
         if (-not $hmi) { continue }
         try {
+            # tag tables from XML (schema-exact) - before CSV tags so tables exist
+            foreach ($tref in @($hmi.tagTablesXml)) {
+                if (-not ($tref -is [string])) { continue }
+                try { Import-TiaHmiTagTable -Hmi $hmi.name -Path (Rel $tref) -Overwrite | Out-Null; Step "HMI tagtable xml $tref" }
+                catch { Fail "HMI '$($hmi.name)' tagtable ${tref}: $($_.Exception.Message)" }
+            }
+            # HMI tags from CSV (Name, Connection, PLCTag, DataType, Acquisition, Comment)
+            foreach ($tref in @($hmi.tags)) {
+                if (-not $tref) { continue }
+                $rows = if ($tref -is [string]) { Rows $tref } else { @($tref) }
+                $n = 0
+                foreach ($r in $rows) {
+                    try {
+                        $tt = if ($r.TagTable) { $r.TagTable } else { $null }
+                        New-TiaHmiTag -Hmi $hmi.name -Name $r.Name -DataType $r.DataType `
+                            -Connection $r.Connection -PlcTag $r.PLCTag -Acquisition $r.Acquisition `
+                            -Comment $r.Comment -TagTable $tt | Out-Null
+                        $n++
+                    } catch { Fail "HMI '$($hmi.name)' tag $($r.Name): $($_.Exception.Message)" }
+                }
+                Step "HMI tags (+$n)$(if($tref -is [string]){" from $tref"})"
+            }
+            # alarms from XML (discrete/analog)
+            foreach ($aref in @($hmi.alarms)) {
+                if (-not $aref) { continue }
+                $p = if ($aref -is [string]) { $aref } else { $aref.importXml }
+                $kind = if ($aref -isnot [string] -and $aref.kind) { $aref.kind } else { 'Discrete' }
+                if ($p) {
+                    try { Import-TiaHmiAlarms -Hmi $hmi.name -Kind $kind -Path (Rel $p) -Overwrite | Out-Null; Step "HMI $kind alarms $p" }
+                    catch { Fail "HMI '$($hmi.name)' alarms ${p}: $($_.Exception.Message)" }
+                }
+            }
+            # screens from XML
             foreach ($scr in @($hmi.screens)) {
                 $p = if ($scr -is [string]) { $scr } else { $scr.importXml }
                 if ($p) { Import-TiaScreen -Hmi $hmi.name -Path (Rel $p) -Overwrite | Out-Null; Step "HMI screen $p" }

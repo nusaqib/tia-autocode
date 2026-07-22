@@ -58,12 +58,14 @@ function Test-TiaSpec {
         # --- UDTs (collect defined names first, for reference checks) ---
         $udtNames = New-Object System.Collections.Generic.List[string]
         foreach ($u in @($plc.udts)) {
+            if (-not $u) { continue }
             $rows = Test-Columns (Resolve-Rel $u) @('UDT','Member','DataType') "UDT[$pn]"
             if ($null -eq $rows) { continue }
             foreach ($r in $rows) { if ($r.UDT) { [void]$udtNames.Add($r.UDT.Trim().ToLowerInvariant()) } }
         }
         $udtSet = @($udtNames | Select-Object -Unique)
         foreach ($u in @($plc.udts)) {
+            if (-not $u) { continue }
             $rows = @(Import-Csv (Resolve-Rel $u) -ErrorAction SilentlyContinue)
             foreach ($r in $rows) {
                 if (-not $r.Member) { Err "UDT[$pn] $($r.UDT): row with empty Member" }
@@ -74,6 +76,7 @@ function Test-TiaSpec {
         # --- FBs defined in logic (for InstanceOfFB refs) ---
         $fbNames = New-Object System.Collections.Generic.List[string]
         foreach ($l in @($plc.logic)) {
+            if (-not $l) { continue }
             $lp = Resolve-Rel $l
             if (-not (Test-Path $lp)) { Err "logic[$pn] file not found: $lp"; continue }
             $txt = Get-Content $lp -Raw
@@ -85,6 +88,7 @@ function Test-TiaSpec {
 
         # --- Modules (rack layout) ---
         foreach ($mod in @($plc.modules)) {
+            if (-not $mod) { continue }
             $rows = Test-Columns (Resolve-Rel $mod) @('Slot','OrderNumber','Name') "Modules[$pn]"
             if ($null -eq $rows) { continue }
             $slots = @{}
@@ -98,6 +102,7 @@ function Test-TiaSpec {
 
         # --- Tags ---
         foreach ($t in @($plc.tags)) {
+            if (-not $t) { continue }
             $rows = Test-Columns (Resolve-Rel $t) @('TagTable','Name','DataType','Address') "Tags[$pn]"
             if ($null -eq $rows) { continue }
             $seen = @{}
@@ -146,6 +151,35 @@ function Test-TiaSpec {
                     Test-TypeRef $r.DataType $udtSet "DBMembers[$pn] $($r.DBName).$($r.Member)"
                 }
             }
+        }
+    }
+
+    # --- HMIs (Phase 3) ---
+    foreach ($hmi in @($spec.hmis)) {
+        if (-not $hmi) { continue }
+        $hn = $hmi.name
+        if (-not $hn) { Err "an hmi entry is missing 'name'" }
+        foreach ($t in @($hmi.tags)) {
+            if (-not ($t -is [string])) { continue }
+            $rows = Test-Columns (Resolve-Rel $t) @('Name','DataType') "HMITags[$hn]"
+            if ($null -eq $rows) { continue }
+            $seen = @{}
+            foreach ($r in $rows) {
+                $key = if ($r.TagTable) { "$($r.TagTable)/$($r.Name)" } else { $r.Name }
+                if ($seen.ContainsKey($key)) { Err "HMITags[$hn]: duplicate tag '$key'" } else { $seen[$key] = $true }
+                if (-not $r.DataType) { Err "HMITags[$hn] $($r.Name): DataType is required" }
+                # External tag (has a Connection) should name its source PLC tag.
+                if ($r.Connection -and -not $r.PLCTag) { Warn "HMITags[$hn] $($r.Name): Connection set but no PLCTag" }
+            }
+        }
+        foreach ($x in @($hmi.tagTablesXml)) { if ($x -is [string] -and -not (Test-Path (Resolve-Rel $x))) { Err "HMI[$hn] tagTablesXml not found: $x" } }
+        foreach ($a in @($hmi.alarms)) {
+            $p = if ($a -is [string]) { $a } else { $a.importXml }
+            if ($p -and -not (Test-Path (Resolve-Rel $p))) { Err "HMI[$hn] alarms XML not found: $p" }
+        }
+        foreach ($s in @($hmi.screens)) {
+            $p = if ($s -is [string]) { $s } else { $s.importXml }
+            if ($p -and -not (Test-Path (Resolve-Rel $p))) { Err "HMI[$hn] screen XML not found: $p" }
         }
     }
 

@@ -92,6 +92,20 @@ Check "broken fixture spec is rejected (incl. module errors)" {
     (-not $r.Ok) -and $r.Errors.Count -ge 5 -and $modErr
 }
 
+# Phase 3: HMI spec validation (offline).
+Check "HMI spec fixture validates clean" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\hmi-spec\project.yaml')
+    if (-not $r.Ok) { Write-Host "    errors: $($r.Errors -join '; ')" -ForegroundColor Red }
+    $r.Ok -and $r.Errors.Count -eq 0
+}
+Check "broken fixture flags HMI errors (dup tag, missing DataType, missing screen)" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\broken-project\project.yaml')
+    $dup    = @($r.Errors | Where-Object { $_ -match 'HMITags.*duplicate' }).Count -ge 1
+    $noType = @($r.Errors | Where-Object { $_ -match 'HMITags.*DataType is required' }).Count -ge 1
+    $noScr  = @($r.Errors | Where-Object { $_ -match 'HMI.*screen XML not found' }).Count -ge 1
+    $dup -and $noType -and $noScr
+}
+
 # Demo spec parses and has the shape the generator reads.
 Check "specs/demo.json parses and has plcs[0].tagTables[0].tags" {
     $s = Get-Content (Join-Path $root 'specs\demo.json') -Raw | ConvertFrom-Json

@@ -1,0 +1,21 @@
+# Clean HMI spec - fixture for Test-TiaSpec Phase 3 (must PASS validation offline).
+# Exercises the hmis section: HMI tags from CSV + screen/alarm XML round-trip refs.
+project:
+  name: HmiDemo
+portal:
+  new: true
+  ui: false
+plcs:
+  - name: PLC_1
+    tags:
+      - data/PLC_1.tags.csv
+hmis:
+  - name: HMI_1
+    connection: HMI_Connection_1
+    tags:
+      - data/HMI_1.hmitags.csv
+    alarms:
+      - kind: Discrete
+        importXml: hmi/DiscreteAlarms.xml
+    screens:
+      - hmi/Start.xml
