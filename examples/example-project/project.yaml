@@ -2,7 +2,7 @@
 # In a real private project repo this sits at the root; the engine is a git submodule.
 project:
   name: ExampleMachine
-  path: C:\work\ExampleMachine        # created here, or an existing .apXX is opened
+  path: _out/ExampleMachine            # relative to this manifest; gitignored (see .gitignore)
 portal:
   new: true                            # start our own instance (recommended for writes)
   ui: false

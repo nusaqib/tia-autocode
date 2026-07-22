@@ -10,6 +10,14 @@ ScratchDemo/
 **/AdditionalFiles/
 **/*.ap19.lock
 
+# Generated / test TIA projects and build snapshots (never commit project output)
+_out/
+**/_out/
+generated/
+**/generated/
+*.ap1?
+*.ap2?
+
 # OS
 Thumbs.db
 desktop.ini
