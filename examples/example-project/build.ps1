@@ -7,7 +7,7 @@
 # working Openness setup (see the repo README / CLAUDE.md). Nothing here is committed
 # except the spec itself; the generated project and snapshots are ignored by git.
 [CmdletBinding()]
-param([switch]$ShowUI)
+param([switch]$KeepOpen)   # by default we dispose our headless instance so the .ap19 unlocks
 $ErrorActionPreference = 'Stop'
 $here   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $engine = Join-Path $here '..\..\src\TiaOpenness\TiaOpenness.psd1'
@@ -27,3 +27,7 @@ Write-Host "`n== Result ==" -ForegroundColor Cyan
 Write-Host ("Build Ok = {0}" -f $r.Ok) -ForegroundColor $(if($r.Ok){'Green'}else{'Red'})
 if ($r.Errors) { Write-Host "Errors:"; $r.Errors | ForEach-Object { Write-Warning $_ } }
 Write-Host "Project generated under: $(Join-Path $here '_out\ExampleMachine')  (gitignored)"
+
+# Dispose the headless instance we started so the saved .ap19 is unlocked and openable.
+# (Only closes an instance we created via portal.new; harmless otherwise.)
+if (-not $KeepOpen) { try { Disconnect-TiaPortal -Close } catch {} ; Write-Host "Portal closed; open the .ap19 in TIA to inspect." }

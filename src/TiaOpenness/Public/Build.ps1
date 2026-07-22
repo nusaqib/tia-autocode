@@ -98,12 +98,29 @@ function Invoke-TiaBuildFromSpec {
                 elseif ($uref.sclFile) { New-TiaType -Plc $sw -Path (Rel $uref.sclFile) | Out-Null; Step "UDT file" }
             }
 
+            # --- types from XML (reverse round-trip: import into TypeGroup) ---
+            foreach ($tref in @($plc.typesXml)) {
+                if (-not ($tref -is [string])) { continue }
+                try {
+                    $fi = New-Object System.IO.FileInfo((Resolve-Path (Rel $tref)).Path)
+                    $sw.TypeGroup.Types.Import($fi, [Siemens.Engineering.ImportOptions]::Override) | Out-Null
+                    Step "type xml $tref"
+                } catch { Fail "type xml ${tref}: $($_.Exception.Message)" }
+            }
+
             # --- logic (SCL files) --- BEFORE DBs so instance DBs find their FB ---
             foreach ($lref in @($plc.logic) + @($plc.blocks)) {
                 if (-not $lref) { continue }
                 if ($lref -is [string]) { Import-TiaScl -Plc $sw -Path (Rel $lref) | Out-Null; Step "logic $lref" }
                 elseif ($lref.sclFile) { Import-TiaScl -Plc $sw -Path (Rel $lref.sclFile) | Out-Null; Step "logic file" }
                 elseif ($lref.scl) { Import-TiaScl -Plc $sw -Scl $lref.scl | Out-Null; Step "logic (inline)" }
+            }
+
+            # --- blocks from XML (reverse round-trip: import into BlockGroup) ---
+            foreach ($bref in @($plc.blocksXml)) {
+                if (-not ($bref -is [string])) { continue }
+                try { Import-TiaBlockXml -Plc $sw -Path (Rel $bref) -Overwrite | Out-Null; Step "block xml $bref" }
+                catch { Fail "block xml ${bref}: $($_.Exception.Message)" }
             }
 
             # --- DBs (CSV blocks+members -> SCL, or inline) - after logic ---

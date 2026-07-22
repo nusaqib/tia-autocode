@@ -58,7 +58,7 @@ foreach ($c in $cmds) {
 # Core cmdlets must exist by name (guards against accidental removal/rename).
 $core = 'Connect-TiaPortal','Get-TiaPlc','New-TiaTag','Import-TiaScl','Invoke-TiaCompile',
         'New-TiaDataBlock','Get-TiaHmi','Invoke-TiaBuildFromSpec','Export-TiaProgram','Test-TiaSpec',
-        'Add-TiaModule','Get-TiaModule','Get-TiaDeviceList'
+        'Add-TiaModule','Get-TiaModule','Get-TiaDeviceList','Export-TiaToSpec'
 foreach ($n in $core) { Check "core cmdlet present: $n" { [bool](Get-Command $n -ErrorAction SilentlyContinue) } }
 
 # Phase 1: CSV -> SCL synthesizers (Private; call in module scope).
