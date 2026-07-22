@@ -105,6 +105,7 @@ src/TiaOpenness/
 | **HMI** | Create panels; discover HMI software; introspect API; screens/tag-tables/alarms XML round-trip; tags + connections | `New-TiaHmiDevice`, `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ◐ panel creation validated live (KTP700 Comfort); screen/tag/alarm XML wrappers offline-tested |
 | **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
+| **Authoring (Phase 4)** | XLSX workbook import; naming-convention lint; reusable SCL/UDT templates | `Import-TiaXlsx`, `Test-TiaNaming`, `Get-/Expand-TiaTemplate` | ✅ offline-tested; xlsx-build + template-build validated live (compile 0 errors) |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
 
 Legend: ✅ validated end-to-end against the live V19 session (2026-07-21) ·
@@ -198,6 +199,20 @@ Common conventions:
 - **`Invoke-TiaBuildFromSpec (-Path | -Spec) [-BaseDir]`** → see §6. Returns
   `{Ok, Steps[], Errors[]}`; per-item failures are collected, not fatal.
 
+### 5.11 Authoring helpers (Phase 4)
+- **`Import-TiaXlsx -Path [-Sheet]`** → reads a worksheet from an `.xlsx` workbook into
+  rows (like `Import-Csv`), dependency-free (parses OOXML from the zip; no Excel/COM).
+  Anywhere a spec takes a `.csv` ref you may write `data/book.xlsx#SheetName`.
+- **`Test-TiaNaming -Path [-Rules]`** → lints object names (tags/udts/dbs/fbs/fcs/
+  hmiTags/modules) against rules (pattern, prefix, suffix, maxLength, case). Rules come
+  from the manifest's `naming:` section, a `-Rules` file, or a hashtable. Returns
+  `{Ok, Violations[], Summary}`. `Test-TiaSpec` folds violations into its Warnings.
+- **`Get-TiaTemplate [-Name] [-TemplateDir]`** / **`Expand-TiaTemplate -Name [-Parameters]
+  [-OutFile] [-TemplateDir]`** → list and instantiate reusable SCL/UDT templates
+  (`{{Token}}` placeholders + `@param name[=default]` metadata). Built-ins: MotorStarter
+  (FB), AnalogScale (FC), CommandStatus (UDT). In a spec, a `logic` entry may be
+  `{ template, params }`.
+
 ---
 
 ## 6. Declarative spec schema
@@ -239,6 +254,12 @@ Execution order: portal → project → for each PLC (device → modules → UDT
 DBs → tags → compile → snapshot) → for each HMI (tagTablesXml → tags CSV → alarms →
 screens) → save. Relative paths resolve against `-BaseDir` (defaults to the spec
 file's folder).
+
+**Phase 4 spec extras.** Any tabular ref (tags/udts/dbs/modules/hmitags) may point at a
+workbook sheet instead of a CSV: `"data/PLC_1.xlsx#Tags"`. A `logic` entry may be a
+template instead of a file: `{ "template":"MotorStarter", "params":{ "Name":"FB_Conv" } }`.
+An optional top-level `naming` section drives `Test-TiaNaming` (folded into the
+validator's warnings), e.g. `"naming": { "tags": { "case":"Pascal" }, "fbs": { "suffix":"_FB" } }`.
 
 ---
 

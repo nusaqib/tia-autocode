@@ -58,6 +58,20 @@ addresses well-formed; names unique; module slots unique integers; and that UDT/
 references and datatypes resolve. Returns `{ Ok, Errors, Warnings }`; run it in the
 project repo's CI.
 
+## Authoring helpers (Phase 4)
+
+- **XLSX instead of CSV**: any tabular ref may be `data/book.xlsx#SheetName`. Reading is
+  dependency-free (`Import-TiaXlsx` parses OOXML; no Excel/COM), so CI stays clean.
+- **Naming lint**: add a `naming:` section (pattern/prefix/suffix/maxLength/case per kind
+  - tags/udts/dbs/fbs/fcs/hmiTags/modules). `Test-TiaNaming -Path` reports violations;
+  `Test-TiaSpec` folds them into Warnings. Standalone: also accepts `-Rules <file|hashtable>`.
+- **Templates**: `Get-TiaTemplate` / `Expand-TiaTemplate` instantiate reusable SCL/UDT
+  templates (`{{Token}}` + `@param name[=default]`). Built-ins: MotorStarter (FB),
+  AnalogScale (FC), CommandStatus (UDT). In a spec, a `logic` entry may be
+  `{ template: MotorStarter, params: { Name: FB_Conveyor } }` (optionally `templateDir`
+  for a project-local library). `Test-TiaSpec` expands templates to resolve InstanceOfFB
+  / TypedOfUDT references.
+
 ## Delegates to the area skills
 
 - Hardware/rack -> `tia-hardware`

@@ -96,6 +96,9 @@ build:
 
 ### 3.2 CSV column contracts (canonical exported format)
 
+> Phase 4: any tabular ref below may instead point at an Excel worksheet -
+> `data/PLC_1.xlsx#Tags` - read dependency-free by `Import-TiaXlsx`. Same columns.
+
 **tags** (`*.tags.csv`)
 | Column | Req | Notes |
 |---|---|---|
@@ -195,7 +198,7 @@ existing machine (e.g. `PPS_SR_`) into the spec model and diff future changes.
 | **1** | CSV readers + UDT/DB/tag/module synthesizers + manifest-driven `Invoke-TiaBuildFromSpec` + `generated/` snapshots | Yes | ✅ done (compiles 0/0 live) |
 | **2** | `Export-TiaToSpec` (reverse adoption): tags/modules CSV + UDT/block XML + rebuildable manifest; `typesXml`/`blocksXml` round-trip import | Yes | ✅ done |
 | **3** | HMI panel creation (`New-TiaHmiDevice` + `hmis[].orderNumber`) + tags (CSV) + connections + screen/tag-table/alarm XML round-trip, wired into the build + `Test-TiaSpec` | Yes | done - panel creation validated live (KTP700 Comfort); Comfort tag creation is API-limited (XML import), screen/tag/alarm XML wrappers offline-tested |
-| **4** | Optional XLSX-workbook import, naming-convention lint, reusable UDT/SCL template library | Mixed | planned |
+| **4** | Dependency-free XLSX import (`Import-TiaXlsx`; any csv ref may be `book.xlsx#Sheet`), naming-convention lint (`Test-TiaNaming`, folded into `Test-TiaSpec`), reusable UDT/SCL template library (`Get-/Expand-TiaTemplate`, `logic: { template, params }`) | Mixed | done (offline-tested; xlsx build + template build live-validated) |
 | **5** | Private project-repo template (submodule wiring, `build.ps1`, offline-validation CI) + docs | No | planned |
 
 Phase 0 is fully offline and testable — it lands first and locks the contracts

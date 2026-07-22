@@ -276,6 +276,34 @@ device → modules → UDTs → logic → DBs → tags → compile → HMI (tags
 save. Keep specs in git
 as the source of truth; regenerate any time.
 
+### 10.1 Authoring helpers (Phase 4)
+
+**Author in Excel, not just CSV.** Anywhere a spec references a `.csv`, you can point at
+a workbook sheet instead - `data/PLC_1.xlsx#Tags`. Reading is dependency-free (no Excel):
+
+```powershell
+Import-TiaXlsx -Path .\data\PLC_1.xlsx -Sheet Tags   # rows, like Import-Csv
+```
+
+**Lint your naming.** Add a `naming:` section to the manifest (or pass `-Rules`), then:
+
+```powershell
+Test-TiaNaming -Path .\project.yaml    # { Ok, Violations, Summary }
+# rules per kind: pattern (regex), prefix, suffix, maxLength, case (Pascal|camel|UPPER|lower|snake)
+```
+`Test-TiaSpec` runs this automatically when a `naming:` section is present and reports
+any violations as warnings.
+
+**Reuse logic via templates.** List and instantiate parameterized SCL/UDT templates:
+
+```powershell
+Get-TiaTemplate | Format-Table Name, Kind, Description
+Expand-TiaTemplate -Name MotorStarter -Parameters @{ Name='FB_Conveyor' }
+```
+In a spec, a `logic` entry can be a template instead of a file:
+`- { template: MotorStarter, params: { Name: FB_Conveyor } }`. Drop your own `.tmpl`
+files in a folder and pass `templateDir` to use a project-specific library.
+
 ---
 
 ## 11. Download to a CPU (real/simulated hardware)
