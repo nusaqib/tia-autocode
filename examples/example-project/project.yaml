@@ -1,0 +1,26 @@
+# Example tia-autocode project manifest (Phase 0 reference + validator fixture).
+# In a real private project repo this sits at the root; the engine is a git submodule.
+project:
+  name: ExampleMachine
+  path: C:\work\ExampleMachine        # created here, or an existing .apXX is opened
+portal:
+  new: true                            # start our own instance (recommended for writes)
+  ui: false
+plcs:
+  - name: PLC_1
+    orderNumber: "OrderNumber:6ES7 515-2FM02-0AB0/V2.9"   # S7-1515F-2 PN
+    tags:
+      - data/PLC_1.tags.csv
+    udts:
+      - data/PLC_1.udts.csv
+    dbs:
+      blocks: data/PLC_1.dbs.blocks.csv
+      members: data/PLC_1.dbs.members.csv
+    logic:
+      - logic/FC_Scale.scl
+      - logic/FB_MotorStarter.scl
+    compile: true
+build:
+  order: [udts, dbs, logic, tags]
+  snapshotDir: generated
+  save: false

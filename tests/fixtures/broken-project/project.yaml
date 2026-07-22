@@ -1,0 +1,12 @@
+# Intentionally broken spec - fixture for Test-TiaSpec (must FAIL validation).
+project:
+  name: Broken
+plcs:
+  - name: PLC_1
+    tags:
+      - data/tags.csv
+    udts:
+      - data/udts.csv
+    dbs:
+      blocks: data/dbs.blocks.csv
+    logic: []

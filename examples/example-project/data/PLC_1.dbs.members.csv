@@ -1,0 +1,4 @@
+DBName,Member,DataType,StartValue,Retain,Comment
+Settings,Setpoint,Real,50.0,FALSE,speed setpoint
+Settings,Enable,Bool,FALSE,FALSE,master enable
+Settings,Motor1,MotorData,,FALSE,motor 1 data (UDT ref)

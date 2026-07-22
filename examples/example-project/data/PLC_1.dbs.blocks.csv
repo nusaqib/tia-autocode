@@ -1,0 +1,3 @@
+DBName,Number,Kind,OfType,Optimized,Comment
+Settings,,Global,,TRUE,machine settings
+Motor1_DB,,InstanceOfFB,MotorStarter,TRUE,motor 1 instance

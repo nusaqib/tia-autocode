@@ -1,0 +1,10 @@
+FUNCTION "Scale" : Real
+{ S7_Optimized_Access := 'TRUE' }
+VAR_INPUT
+    raw : Int;
+    hi_eng : Real;
+    lo_eng : Real;
+END_VAR
+BEGIN
+    #Scale := #lo_eng + (INT_TO_REAL(#raw) / 27648.0) * (#hi_eng - #lo_eng);
+END_FUNCTION

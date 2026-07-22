@@ -1,0 +1,5 @@
+UDT,Member,DataType,Array,StartValue,Comment
+MotorData,Speed,Real,,0.0,commanded speed
+MotorData,Running,Bool,,FALSE,run feedback
+MotorData,Faults,Word,,,fault bits
+MotorData,History,Real,0..9,,last 10 speeds

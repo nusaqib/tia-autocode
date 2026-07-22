@@ -1,0 +1,6 @@
+TagTable,Name,DataType,Address,Comment,Retain
+IO,Start_PB,Bool,%I0.0,start button,FALSE
+IO,Stop_PB,Bool,%I0.1,stop button (NC),FALSE
+IO,Motor_Run,Bool,%Q0.0,motor contactor,FALSE
+IO,Level_Raw,Int,%IW64,tank level analog in,FALSE
+Memory,Cycle_Count,DInt,%MD100,cycles since start,TRUE

@@ -1,0 +1,150 @@
+# Spec.ps1 - offline validation of a tia-autocode project spec (Phase 0).
+# Test-TiaSpec reads the manifest + CSV data and checks structure, references, and
+# datatypes WITHOUT touching TIA Portal. Run it before every build (and in CI).
+
+$script:TiaPrimitiveTypes = @(
+    'Bool','Byte','Word','DWord','LWord','SInt','USInt','Int','UInt','DInt','UDInt',
+    'LInt','ULInt','Real','LReal','Time','LTime','S5Time','Date','Time_Of_Day','TOD',
+    'Date_And_Time','DT','DTL','LDT','Char','WChar','String','WString'
+) | ForEach-Object { $_.ToLowerInvariant() }
+
+function Test-TiaSpec {
+    <#
+    .SYNOPSIS
+        Validates a project manifest + CSV data offline (no TIA connection needed).
+    .DESCRIPTION
+        Checks: referenced files exist; CSVs have required columns; tag addresses are
+        well-formed; names are unique; UDT/FB references resolve; DB member and tag
+        datatypes are primitives or defined UDTs. Returns { Ok, Errors, Warnings }.
+    .PARAMETER Path
+        Path to the manifest (.yaml/.yml/.json).
+    .EXAMPLE
+        Test-TiaSpec -Path .\examples\example-project\project.yaml
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $errors   = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+    function Err($m){ $errors.Add($m) }
+    function Warn($m){ $warnings.Add($m) }
+
+    if (-not (Test-Path $Path)) { return [pscustomobject]@{ Ok=$false; Errors=@("Manifest not found: $Path"); Warnings=@() } }
+    $base = Split-Path (Resolve-Path $Path) -Parent
+    function Resolve-Rel($p){ if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $base $p } }
+
+    try { $spec = Read-TiaManifest $Path } catch { return [pscustomobject]@{ Ok=$false; Errors=@("Manifest parse error: $($_.Exception.Message)"); Warnings=@() } }
+
+    if (-not $spec.project -or -not $spec.project.name) { Err "project.name is required" }
+
+    function Test-Columns($csvPath, $required, $label) {
+        if (-not (Test-Path $csvPath)) { Err "$label file not found: $csvPath"; return $null }
+        $rows = @(Import-Csv $csvPath)
+        if ($rows.Count -eq 0) { Warn "$label file is empty: $csvPath"; return @() }
+        $cols = $rows[0].PSObject.Properties.Name
+        foreach ($rc in $required) {
+            if ($cols -notcontains $rc) { Err "$label ($([System.IO.Path]::GetFileName($csvPath))): missing required column '$rc'" }
+        }
+        return $rows
+    }
+    function Test-TypeRef($dt, $udtNames, $ctx) {
+        if (-not $dt) { Err "${ctx}: empty DataType"; return }
+        $clean = $dt.Trim().Trim('"').ToLowerInvariant()
+        if ($script:TiaPrimitiveTypes -contains $clean) { return }
+        if ($udtNames -contains $clean) { return }
+        Err "${ctx}: datatype '$dt' is neither a primitive nor a defined UDT"
+    }
+
+    foreach ($plc in @($spec.plcs)) {
+        if (-not $plc) { continue }
+        $pn = $plc.name
+        if (-not $pn) { Err "a plc entry is missing 'name'" }
+
+        # --- UDTs (collect defined names first, for reference checks) ---
+        $udtNames = New-Object System.Collections.Generic.List[string]
+        foreach ($u in @($plc.udts)) {
+            $rows = Test-Columns (Resolve-Rel $u) @('UDT','Member','DataType') "UDT[$pn]"
+            if ($null -eq $rows) { continue }
+            foreach ($r in $rows) { if ($r.UDT) { [void]$udtNames.Add($r.UDT.Trim().ToLowerInvariant()) } }
+        }
+        $udtSet = @($udtNames | Select-Object -Unique)
+        foreach ($u in @($plc.udts)) {
+            $rows = @(Import-Csv (Resolve-Rel $u) -ErrorAction SilentlyContinue)
+            foreach ($r in $rows) {
+                if (-not $r.Member) { Err "UDT[$pn] $($r.UDT): row with empty Member" }
+                Test-TypeRef $r.DataType $udtSet "UDT[$pn] $($r.UDT).$($r.Member)"
+            }
+        }
+
+        # --- FBs defined in logic (for InstanceOfFB refs) ---
+        $fbNames = New-Object System.Collections.Generic.List[string]
+        foreach ($l in @($plc.logic)) {
+            $lp = Resolve-Rel $l
+            if (-not (Test-Path $lp)) { Err "logic[$pn] file not found: $lp"; continue }
+            $txt = Get-Content $lp -Raw
+            foreach ($mm in [regex]::Matches($txt, '(?im)^\s*FUNCTION_BLOCK\s+"?([A-Za-z_]\w*)"?')) {
+                [void]$fbNames.Add($mm.Groups[1].Value.ToLowerInvariant())
+            }
+        }
+        $fbSet = @($fbNames | Select-Object -Unique)
+
+        # --- Tags ---
+        foreach ($t in @($plc.tags)) {
+            $rows = Test-Columns (Resolve-Rel $t) @('TagTable','Name','DataType','Address') "Tags[$pn]"
+            if ($null -eq $rows) { continue }
+            $seen = @{}
+            foreach ($r in $rows) {
+                $key = "$($r.TagTable)/$($r.Name)"
+                if ($seen.ContainsKey($key)) { Err "Tags[$pn]: duplicate tag '$key'" } else { $seen[$key] = $true }
+                if (-not $r.Address) { Err "Tags[$pn] ${key}: Address is required (explicit addressing)" }
+                elseif ($r.Address -notmatch '^%[A-Za-z]+\d+(\.\d+)?$' -and $r.Address -notmatch '^%DB\d+\.') {
+                    Err "Tags[$pn] ${key}: malformed address '$($r.Address)'"
+                }
+                Test-TypeRef $r.DataType $udtSet "Tags[$pn] $key"
+            }
+        }
+
+        # --- DBs ---
+        $dbNames = @{}
+        if ($plc.dbs -and $plc.dbs.blocks) {
+            $rows = Test-Columns (Resolve-Rel $plc.dbs.blocks) @('DBName','Kind') "DBs[$pn]"
+            if ($rows) {
+                foreach ($r in $rows) {
+                    if (-not $r.DBName) { Err "DBs[$pn]: row with empty DBName"; continue }
+                    $dbNames[$r.DBName] = $r.Kind
+                    $kind = "$($r.Kind)".Trim()
+                    if ($kind -notin 'Global','InstanceOfFB','TypedOfUDT') { Err "DBs[$pn] $($r.DBName): invalid Kind '$kind'" }
+                    if ($kind -in 'InstanceOfFB','TypedOfUDT') {
+                        if (-not $r.OfType) { Err "DBs[$pn] $($r.DBName): Kind '$kind' requires OfType" }
+                        elseif ($kind -eq 'InstanceOfFB' -and ($fbSet -notcontains $r.OfType.Trim().ToLowerInvariant())) {
+                            Err "DBs[$pn] $($r.DBName): OfType FB '$($r.OfType)' not found in logic/"
+                        }
+                        elseif ($kind -eq 'TypedOfUDT' -and ($udtSet -notcontains $r.OfType.Trim().ToLowerInvariant())) {
+                            Err "DBs[$pn] $($r.DBName): OfType UDT '$($r.OfType)' not defined"
+                        }
+                    }
+                }
+            }
+        }
+        if ($plc.dbs -and $plc.dbs.members) {
+            $rows = Test-Columns (Resolve-Rel $plc.dbs.members) @('DBName','Member','DataType') "DBMembers[$pn]"
+            if ($rows) {
+                foreach ($r in $rows) {
+                    if ($dbNames.Count -and -not $dbNames.ContainsKey($r.DBName)) {
+                        Warn "DBMembers[$pn]: member '$($r.Member)' targets DB '$($r.DBName)' not listed in dbs.blocks"
+                    } elseif ($dbNames.ContainsKey($r.DBName) -and $dbNames[$r.DBName] -ne 'Global') {
+                        Warn "DBMembers[$pn]: DB '$($r.DBName)' is $($dbNames[$r.DBName]); members only apply to Global DBs"
+                    }
+                    Test-TypeRef $r.DataType $udtSet "DBMembers[$pn] $($r.DBName).$($r.Member)"
+                }
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Ok       = ($errors.Count -eq 0)
+        Errors   = @($errors)
+        Warnings = @($warnings)
+        Summary  = "Errors: $($errors.Count), Warnings: $($warnings.Count)"
+    }
+}

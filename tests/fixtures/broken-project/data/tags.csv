@@ -1,0 +1,4 @@
+TagTable,Name,DataType,Address,Comment
+IO,Start,Bool,I0.0,bad address missing percent
+IO,Start,Bool,%I0.1,duplicate tag name
+IO,Weird,NoSuchType,%M0.0,undefined datatype

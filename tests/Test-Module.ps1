@@ -57,8 +57,19 @@ foreach ($c in $cmds) {
 
 # Core cmdlets must exist by name (guards against accidental removal/rename).
 $core = 'Connect-TiaPortal','Get-TiaPlc','New-TiaTag','Import-TiaScl','Invoke-TiaCompile',
-        'New-TiaDataBlock','Get-TiaHmi','Invoke-TiaBuildFromSpec','Export-TiaProgram'
+        'New-TiaDataBlock','Get-TiaHmi','Invoke-TiaBuildFromSpec','Export-TiaProgram','Test-TiaSpec'
 foreach ($n in $core) { Check "core cmdlet present: $n" { [bool](Get-Command $n -ErrorAction SilentlyContinue) } }
+
+# Phase 0: offline spec validation (no TIA needed).
+Check "example project spec validates clean" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'examples\example-project\project.yaml')
+    $r.Ok -and $r.Errors.Count -eq 0
+}
+Check "broken fixture spec is rejected (>=3 errors)" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\broken-project\project.yaml')
+    if ($r.Ok) { Write-Host "    expected failure but got Ok" -ForegroundColor Red }
+    (-not $r.Ok) -and $r.Errors.Count -ge 3
+}
 
 # Demo spec parses and has the shape the generator reads.
 Check "specs/demo.json parses and has plcs[0].tagTables[0].tags" {
