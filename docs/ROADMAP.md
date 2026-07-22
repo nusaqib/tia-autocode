@@ -82,7 +82,9 @@ plcs:
     compile: true
 hmis:
   - name: HMI_1
-    tags:         [ data/HMI_1.hmitags.csv ]       # CSV -> New-TiaHmiTag
+    orderNumber:  "OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0"  # KTP700 Comfort (created if absent)
+    deviceItemName: "KTP700 Comfort"
+    tags:         [ data/HMI_1.hmitags.csv ]       # authored record; Comfort applies via XML import
     tagTablesXml: [ hmi/tags/Motors.xml ]          # schema-exact tag table (optional)
     alarms:       [ { kind: Discrete, importXml: hmi/DiscreteAlarms.xml } ]
     screens:      [ hmi/screens/Start.xml ]
@@ -192,7 +194,7 @@ existing machine (e.g. `PPS_SR_`) into the spec model and diff future changes.
 | **0** | Manifest schema + CSV column contracts + `Test-TiaSpec` offline validator + example project skeleton + tests/CI | No | ✅ done |
 | **1** | CSV readers + UDT/DB/tag/module synthesizers + manifest-driven `Invoke-TiaBuildFromSpec` + `generated/` snapshots | Yes | ✅ done (compiles 0/0 live) |
 | **2** | `Export-TiaToSpec` (reverse adoption): tags/modules CSV + UDT/block XML + rebuildable manifest; `typesXml`/`blocksXml` round-trip import | Yes | ✅ done |
-| **3** | HMI tags (CSV) + connections + screen/tag-table/alarm XML round-trip, wired into the build + `Test-TiaSpec` | Yes | done (offline-tested; live HMI validation pending a panel device) |
+| **3** | HMI panel creation (`New-TiaHmiDevice` + `hmis[].orderNumber`) + tags (CSV) + connections + screen/tag-table/alarm XML round-trip, wired into the build + `Test-TiaSpec` | Yes | done - panel creation validated live (KTP700 Comfort); Comfort tag creation is API-limited (XML import), screen/tag/alarm XML wrappers offline-tested |
 | **4** | Optional XLSX-workbook import, naming-convention lint, reusable UDT/SCL template library | Mixed | planned |
 | **5** | Private project-repo template (submodule wiring, `build.ps1`, offline-validation CI) + docs | No | planned |
 

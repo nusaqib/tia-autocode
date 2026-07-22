@@ -41,6 +41,40 @@ function Get-TiaHmi {
     $results
 }
 
+function New-TiaHmiDevice {
+    <#
+    .SYNOPSIS
+        Adds a WinCC HMI panel (device) to the current project from a catalog order number.
+    .DESCRIPTION
+        Same CreateWithItem path as New-TiaDevice, but for an HMI station. The order
+        number + panel image version must match a panel installed in your TIA catalog.
+        Validated live on V19: KTP700 Comfort = 'OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0'.
+        Other Comfort MLFBs (TP700 0GC01, TP1200 0MC01, ...) follow the same shape; the
+        version segment (e.g. /17.0.0.0) is the panel image and varies by install.
+    .PARAMETER OrderNumber
+        Catalog identifier. 'OrderNumber:' is prepended automatically if omitted.
+    .PARAMETER Name
+        HMI station (device) name, e.g. HMI_1.
+    .PARAMETER DeviceItemName
+        Name for the panel device item (defaults to the station name).
+    .EXAMPLE
+        New-TiaHmiDevice -OrderNumber '6AV2 124-1GC01-0AX0/17.0.0.0' -Name HMI_1
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$OrderNumber,
+        [Parameter(Mandatory)][string]$Name,
+        [string]$DeviceItemName,
+        $Project
+    )
+    $project = Get-CurrentProject $Project
+    $tid = if ($OrderNumber -like 'OrderNumber:*') { $OrderNumber } else { "OrderNumber:$OrderNumber" }
+    if (-not $DeviceItemName) { $DeviceItemName = $Name }
+    Write-Verbose "Creating HMI device '$Name' ($tid)..."
+    [void]$project.Devices.CreateWithItem($tid, $DeviceItemName, $Name)
+    Get-TiaHmi -Name $Name | Select-Object -First 1
+}
+
 function Resolve-HmiSoftware {
     param($Hmi)
     if (-not $Hmi) {
@@ -250,12 +284,23 @@ function New-TiaHmiTag {
     )
     $sw = Resolve-HmiSoftware $Hmi
     $table = Resolve-HmiTagTable $sw $TagTable
-    $coll = if ($table.PSObject.Properties['Tags']) { $table.Tags } else { $table }
+    $tagsProp = if ($table) { $table.PSObject.Properties['Tags'] } else { $null }
+    $coll = if ($tagsProp -and $null -ne $table.Tags) { $table.Tags } else { $table }
+    # Note: $coll may be an EMPTY composition - test for $null explicitly, since PowerShell
+    # treats an empty enumerable as falsy (so `-not $coll` would wrongly fire here).
+    if ($null -eq $coll) { throw "Could not resolve an HMI tag collection on '$($sw.Name)'. Run Show-TiaHmiApi to inspect." }
 
-    $tag = $coll | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    $tag = @($coll) | Where-Object { $_ -and $_.Name -eq $Name } | Select-Object -First 1
     if (-not $tag) {
+        # WinCC Comfort/Advanced 'TagComposition' exposes only CreateFrom(MasterCopy) -
+        # no Create(string) - so tags there must come from XML import or a master copy.
         $create = $coll.GetType().GetMethod('Create', [type[]]@([string]))
-        if (-not $create) { throw "HMI tag collection (type=$($coll.GetType().Name)) has no Create(string). Run Show-TiaHmiApi and author via Import-TiaHmiTagTable XML instead." }
+        if (-not $create) {
+            throw ("This HMI flavor ($($coll.GetType().Name)) has no Create(string) for tags. " +
+                   "On WinCC Comfort/Advanced, author HMI tags by exporting a tag table " +
+                   "(Export-TiaHmiTagTable), editing the XML, and re-importing " +
+                   "(Import-TiaHmiTagTable) - the DataType is a typed link, not a plain string.")
+        }
         $tag = $create.Invoke($coll, @($Name))
     }
     function TrySet($obj, $prop, $val) {

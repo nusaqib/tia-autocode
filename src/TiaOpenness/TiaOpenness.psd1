@@ -18,7 +18,7 @@
         'Get-TiaType','New-TiaType','New-TiaDataBlock',
         'New-TiaBlockGroup','Get-TiaBlockGroup','Remove-TiaBlock','New-TiaOb',
         'Get-TiaHmi','Show-TiaHmiApi','Get-TiaScreen','Export-TiaScreen','Import-TiaScreen',
-        'Get-TiaHmiConnection','Get-TiaHmiTag','New-TiaHmiTag',
+        'New-TiaHmiDevice','Get-TiaHmiConnection','Get-TiaHmiTag','New-TiaHmiTag',
         'Export-TiaHmiTagTable','Import-TiaHmiTagTable','Export-TiaHmiAlarms','Import-TiaHmiAlarms',
         'Invoke-TiaBuildFromSpec','Export-TiaToSpec',
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',

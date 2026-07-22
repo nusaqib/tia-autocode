@@ -102,7 +102,7 @@ src/TiaOpenness/
 | **Logic blocks** | FC/FB/OB from SCL text or `.scl`; SimaticML XML import; export | `Import-TiaScl`, `New-TiaOb`, `Import-TiaBlockXml`, `Export-TiaBlock`, `Get-TiaBlock` | ✅ validated (imported FC+FB; read blocks) |
 | **Compile** | Compile a block or whole PLC; structured result | `Invoke-TiaCompile` | ✅ validated (0 errors / 0 warnings) |
 | **Organization** | Nested block folders; delete blocks | `New-/Get-TiaBlockGroup`, `Remove-TiaBlock` | ☑ implemented |
-| **HMI** | Discover HMI software; introspect API; screens/tag-tables/alarms XML round-trip; tags + connections | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ☑ implemented (offline-tested; needs a live HMI to validate) |
+| **HMI** | Create panels; discover HMI software; introspect API; screens/tag-tables/alarms XML round-trip; tags + connections | `New-TiaHmiDevice`, `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ◐ panel creation validated live (KTP700 Comfort); screen/tag/alarm XML wrappers offline-tested |
 | **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
@@ -176,6 +176,9 @@ Common conventions:
 - **`Show-TiaHmiApi [-Hmi]`** → reflection dump of the HMI object's properties/collections.
 - **`Get-TiaScreen [-Name] [-Hmi]`** → screens (recursive).
 - **`Export-TiaScreen -Name -Path [-Overwrite] [-Hmi]`** / **`Import-TiaScreen -Path [-Overwrite] [-Hmi]`**.
+- **`New-TiaHmiDevice -OrderNumber -Name [-DeviceItemName]`** → adds a WinCC panel from
+  a catalog order number (CreateWithItem). Live-validated: KTP700 Comfort
+  `OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0`. Returns the `Get-TiaHmi` wrapper.
 - **`Get-TiaHmiConnection [-Name] [-Hmi]`** → connections `{Name, Type, Connection}`.
 - **`Get-TiaHmiTag [-Name] [-TagTable] [-Hmi]`** → HMI tags across tables.
 - **`New-TiaHmiTag -Name [-DataType] [-Connection] [-PlcTag] [-Address] [-Acquisition] [-Comment] [-TagTable] [-Hmi]`**
@@ -268,10 +271,15 @@ Current limitations:
   compile, 0 errors). Remaining items below are the not-yet-live-exercised pieces.
 - **`Invoke-TiaDownload`** pre/post delegates are a scaffold - real downloads may need
   per-configuration decisions (stop modules, overwrite) tailored to the setup.
-- **HMI tag/connection cmdlets** (`Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`,
-  `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms`) ship and are
-  offline-tested, but are **reflection-based** (WinCC collection names vary by flavor)
-  and **not yet exercised against a live HMI** - validate on a scratch panel first.
+- **HMI panel creation** (`New-TiaHmiDevice`, and the `hmis[].orderNumber` spec key) is
+  **validated live** (KTP700 Comfort on V19). **HMI tag creation via the API is not
+  possible on WinCC Comfort/Advanced** - the `TagComposition` exposes only
+  `CreateFrom(MasterCopy)` and the tag DataType is a typed link, not a string - so
+  `New-TiaHmiTag` works only on flavors that expose a tag `Create`; on Comfort, author
+  tags via tag-table XML import (`Import-TiaHmiTagTable`). The build treats CSV HMI tags
+  on such flavors as validated-but-deferred (a note, not a failure).
+- **HMI tag-table/alarm/screen XML round-trip** wrappers are reflection-based and
+  offline-tested; validate on a scratch panel before running against anything live.
 - **SimaticML XML** authoring is schema/version-specific; export a real block to learn
   the exact shape.
 

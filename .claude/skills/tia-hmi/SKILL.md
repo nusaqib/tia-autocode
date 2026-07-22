@@ -36,6 +36,28 @@ Import-TiaScreen -Hmi HMI_1 -Path .\Start.xml -Overwrite   # apply
 To create a new screen: export an existing one as a template, edit name + content,
 import it. Commit the screen XML to git for versioning and diffing.
 
+## Create an HMI panel (device)
+
+`New-TiaHmiDevice` adds a WinCC panel from a catalog order number (same CreateWithItem
+path as `New-TiaDevice`). Live-validated on V19 with a **KTP700 Comfort**:
+
+```powershell
+New-TiaHmiDevice -OrderNumber '6AV2 124-1GC01-0AX0/17.0.0.0' -Name HMI_1 `
+                 -DeviceItemName 'KTP700 Comfort'
+```
+
+The `/17.0.0.0` segment is the panel *image version* and varies by install; the MLFB
+alone is not enough. Other Comfort MLFBs (TP700 `0GC01`, TP1200 `0MC01`, ...) share the
+shape. In a spec, declare it under the `hmis` section:
+
+```yaml
+hmis:
+  - name: HMI_1
+    orderNumber: "OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0"
+    deviceItemName: "KTP700 Comfort"
+```
+`Invoke-TiaBuildFromSpec` creates the panel if a matching HMI is not already present.
+
 ## HMI tags & connections
 
 Tags and connections live under HMI-flavor-specific collections (`TagFolder`,
@@ -52,8 +74,14 @@ New-TiaHmiTag -Hmi HMI_1 -Name LocalCount -DataType Int   # internal (no -Connec
 
 `New-TiaHmiTag` finds the tag collection, calls `Create(name)`, then sets whichever of
 `DataTypeName`/`Connection`/`PlcTag`/`Comment`/`AcquisitionCycleName` exist on this
-flavor. If the members do not match (e.g. Unified), it throws with a hint to run
-`Show-TiaHmiApi` and author the tag table as XML instead.
+flavor.
+
+> **Verified live (V19 Comfort):** a Comfort `TagComposition` exposes only
+> `CreateFrom(MasterCopy)` - there is **no** `Create(name)` - and its tag `DataType` is
+> a typed link, not a string. So on Comfort/Advanced, `New-TiaHmiTag` cannot create
+> tags; author them via **tag-table XML import** (below) or master copies. The
+> declarative build detects this and records the CSV rows as validated-but-deferred
+> rather than failing. Keep the hmitags CSV as the human-readable record.
 
 ## Tag tables & alarms - XML round-trip too
 

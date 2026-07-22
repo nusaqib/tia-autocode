@@ -214,6 +214,13 @@ Export-TiaBlock   -Plc $plc -Name MotorStarter -Path .\MotorStarter.xml -Overwri
 
 ## 9. HMI (WinCC)
 
+Create a panel from a catalog order number (validated live with a KTP700 Comfort):
+
+```powershell
+New-TiaHmiDevice -OrderNumber '6AV2 124-1GC01-0AX0/17.0.0.0' -Name HMI_1 `
+                 -DeviceItemName 'KTP700 Comfort'   # /version is the panel image
+```
+
 HMI collections vary by WinCC flavor — **inspect first**:
 
 ```powershell
@@ -241,10 +248,13 @@ New-TiaHmiTag -Hmi HMI_1 -Name MotorSpeed -DataType Real `
 
 Tag tables and alarms also round-trip as XML (`Export-/Import-TiaHmiTagTable`,
 `Export-/Import-TiaHmiAlarms -Kind Discrete|Analog`). In a spec, the `hmis` section
-drives all of this: `tags` (CSV), `tagTablesXml`, `alarms`, `screens`.
+drives all of this: `orderNumber` (create the panel), `tags` (CSV), `tagTablesXml`,
+`alarms`, `screens`.
 
-> These HMI wrappers are reflection-based (WinCC flavors differ); validate against a
-> scratch panel before touching anything live.
+> **On WinCC Comfort/Advanced you cannot create HMI tags via the API** (the tag
+> collection has no `Create`; the DataType is a typed link). Author them via tag-table
+> XML import (`Import-TiaHmiTagTable`); `New-TiaHmiTag` is for flavors that expose a tag
+> `Create`. These wrappers are reflection-based — validate on a scratch panel first.
 
 See the `tia-hmi` skill for details.
 

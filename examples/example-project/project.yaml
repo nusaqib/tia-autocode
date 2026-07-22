@@ -22,6 +22,17 @@ plcs:
       - logic/FC_Scale.scl
       - logic/FB_MotorStarter.scl
     compile: true
+hmis:
+  - name: HMI_1
+    # WinCC KTP700 Comfort panel. orderNumber = MLFB + panel image version.
+    # Validated live on TIA V19; adjust the /version segment to match your catalog.
+    orderNumber: "OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0"
+    deviceItemName: "KTP700 Comfort"
+    # HMI tags are authored as a spreadsheet for the record; on Comfort/Advanced they
+    # are applied by exporting a tag table, editing the XML, and re-importing
+    # (Export-/Import-TiaHmiTagTable) - the tag DataType is a typed link, not a string.
+    tags:
+      - data/HMI_1.hmitags.csv
 build:
   order: [udts, logic, dbs, tags]   # logic before dbs so instance DBs find their FB
   snapshotDir: generated

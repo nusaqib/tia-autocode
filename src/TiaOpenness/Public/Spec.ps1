@@ -159,6 +159,13 @@ function Test-TiaSpec {
         if (-not $hmi) { continue }
         $hn = $hmi.name
         if (-not $hn) { Err "an hmi entry is missing 'name'" }
+        if ($hmi.orderNumber) {
+            $ord = "$($hmi.orderNumber)" -replace '^OrderNumber:',''
+            # MLFB like 6AV2 124-1GC01-0AX0/17.0.0.0 (panel image version required)
+            if ($ord -notmatch '^6AV\d.*/\d+(\.\d+)*$') {
+                Warn "HMI[$hn]: orderNumber '$($hmi.orderNumber)' does not look like '6AV... /<version>' (panel image version required)"
+            }
+        }
         foreach ($t in @($hmi.tags)) {
             if (-not ($t -is [string])) { continue }
             $rows = Test-Columns (Resolve-Rel $t) @('Name','DataType') "HMITags[$hn]"

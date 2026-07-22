@@ -165,17 +165,27 @@ function Invoke-TiaBuildFromSpec {
     foreach ($hmi in @($Spec.hmis)) {
         if (-not $hmi) { continue }
         try {
+            # --- HMI device (panel) --- create from order number if not already present
+            $existingHmi = Get-TiaHmi -Name $hmi.name | Select-Object -First 1
+            if (-not $existingHmi -and $hmi.orderNumber) {
+                New-TiaHmiDevice -OrderNumber $hmi.orderNumber -Name $hmi.name -DeviceItemName $hmi.deviceItemName | Out-Null
+                Step "added HMI $($hmi.name) ($($hmi.orderNumber))"
+            }
+
             # tag tables from XML (schema-exact) - before CSV tags so tables exist
             foreach ($tref in @($hmi.tagTablesXml)) {
                 if (-not ($tref -is [string])) { continue }
                 try { Import-TiaHmiTagTable -Hmi $hmi.name -Path (Rel $tref) -Overwrite | Out-Null; Step "HMI tagtable xml $tref" }
                 catch { Fail "HMI '$($hmi.name)' tagtable ${tref}: $($_.Exception.Message)" }
             }
-            # HMI tags from CSV (Name, Connection, PLCTag, DataType, Acquisition, Comment)
+            # HMI tags from CSV (Name, Connection, PLCTag, DataType, Acquisition, Comment).
+            # On WinCC Comfort/Advanced the tag collection has no Create(string) - tags
+            # come from tag-table XML import - so treat that as an informative note (not a
+            # failure) and stop trying; genuine per-row errors on other flavors still fail.
             foreach ($tref in @($hmi.tags)) {
                 if (-not $tref) { continue }
                 $rows = if ($tref -is [string]) { Rows $tref } else { @($tref) }
-                $n = 0
+                $n = 0; $unsupported = $false
                 foreach ($r in $rows) {
                     try {
                         $tt = if ($r.TagTable) { $r.TagTable } else { $null }
@@ -183,9 +193,19 @@ function Invoke-TiaBuildFromSpec {
                             -Connection $r.Connection -PlcTag $r.PLCTag -Acquisition $r.Acquisition `
                             -Comment $r.Comment -TagTable $tt | Out-Null
                         $n++
-                    } catch { Fail "HMI '$($hmi.name)' tag $($r.Name): $($_.Exception.Message)" }
+                    } catch {
+                        # WinCC Comfort/Advanced cannot create HMI tags via the public API
+                        # (no Create; tags need typed-DataType XML import). Treat that as an
+                        # informative note, not a build failure; other flavors still per-row fail.
+                        if ($_.Exception.Message -match 'no Create\(string\)|Could not resolve an HMI tag collection') { $unsupported = $true; break }
+                        Fail "HMI '$($hmi.name)' tag $($r.Name): $($_.Exception.Message)"
+                    }
                 }
-                Step "HMI tags (+$n)$(if($tref -is [string]){" from $tref"})"
+                if ($unsupported) {
+                    Step "HMI tags: $(@($rows).Count) row(s) in $tref validated; this HMI flavor needs tag-table XML import (Import-TiaHmiTagTable) - see the tia-hmi skill"
+                } else {
+                    Step "HMI tags (+$n)$(if($tref -is [string]){" from $tref"})"
+                }
             }
             # alarms from XML (discrete/analog)
             foreach ($aref in @($hmi.alarms)) {

@@ -1,0 +1,5 @@
+Name,DataType,Connection,PLCTag,Acquisition,Comment,TagTable
+MotorSpeed,Real,HMI_Connection_1,"""Motor1_DB"".Speed",500 ms,Motor 1 speed,Motors
+MotorRunning,Bool,HMI_Connection_1,"""Motor1_DB"".Run",1 s,Motor 1 running feedback,Motors
+LineState,Int,HMI_Connection_1,LineState,1 s,Overall line state,Status
+ScreenIndex,Int,,,,Internal navigation index,Status
