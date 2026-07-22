@@ -10,6 +10,7 @@ $script:TiaOpennessState = [ordered]@{
     EngineeringDll  = $null
     SearchDirs      = @()
     ResolveHandler  = $null
+    Resolving       = (New-Object 'System.Collections.Generic.HashSet[string]')
 }
 
 function Get-TiaInstalledVersion {
@@ -114,21 +115,52 @@ function Resolve-TiaAssembly {
     if ($portalRoot) { $searchDirs.Add((Join-Path $portalRoot.FullName 'Bin')) }
     $searchDirs = $searchDirs | Where-Object { Test-Path $_ } | Select-Object -Unique
 
-    $handler = [System.ResolveEventHandler]{
-        param($sender, $eventArgs)
-        $simpleName = ($eventArgs.Name -split ',')[0].Trim()
-        foreach ($dir in $script:TiaOpennessState.SearchDirs) {
-            $candidate = Join-Path $dir "$simpleName.dll"
-            if (Test-Path $candidate) {
-                try { return [System.Reflection.Assembly]::LoadFrom($candidate) } catch { }
-            }
+    # Dependency resolution uses a COMPILED C# handler rather than a PowerShell
+    # scriptblock. Starting a full (headless) Portal or Attach() raises AssemblyResolve
+    # for hundreds of dependencies across multiple threads; a scriptblock delegate
+    # re-enters and StackOverflows the process. The C# handler has a [ThreadStatic]
+    # re-entrancy guard and returns already-loaded assemblies, which is reliable.
+    if (-not ('TiaOpenness.AssemblyResolver' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Reflection;
+using System.Collections.Generic;
+namespace TiaOpenness {
+    public static class AssemblyResolver {
+        public static string[] SearchDirs = new string[0];
+        [ThreadStatic] private static HashSet<string> _resolving;
+        private static bool _registered;
+        public static void Register() {
+            if (_registered) return;
+            AppDomain.CurrentDomain.AssemblyResolve += OnResolve;
+            _registered = true;
         }
-        return $null
+        private static Assembly OnResolve(object sender, ResolveEventArgs args) {
+            string name = new AssemblyName(args.Name).Name;
+            if (_resolving == null) _resolving = new HashSet<string>();
+            if (_resolving.Contains(name)) return null;   // re-entrancy guard
+            _resolving.Add(name);
+            try {
+                foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies()) {
+                    try { if (a.GetName().Name == name) return a; } catch {}
+                }
+                foreach (string dir in SearchDirs) {
+                    string p = Path.Combine(dir, name + ".dll");
+                    if (File.Exists(p)) { try { return Assembly.LoadFrom(p); } catch {} }
+                }
+                return null;
+            } finally { _resolving.Remove(name); }
+        }
+    }
+}
+'@
     }
 
     $script:TiaOpennessState.SearchDirs = @($searchDirs)
-    [System.AppDomain]::CurrentDomain.add_AssemblyResolve($handler)
-    $script:TiaOpennessState.ResolveHandler = $handler
+    [TiaOpenness.AssemblyResolver]::SearchDirs = [string[]]@($searchDirs)
+    [TiaOpenness.AssemblyResolver]::Register()
+    $script:TiaOpennessState.ResolveHandler = 'TiaOpenness.AssemblyResolver'
 
     # Load the entry assembly (+ companion assemblies for the modular API).
     [void][System.Reflection.Assembly]::LoadFrom($engDll)

@@ -17,18 +17,21 @@ via the Framework `csc.exe` / MSBuild (net48).
 | Module: connect / project / device / tags / types / DBs / blocks / HMI / compile / export / download | ✅ built, loads, **37 cmdlets** exported |
 | Declarative generator (`Invoke-TiaBuildFromSpec`) | ✅ built |
 | Session enumeration (`GetProcesses`) | ✅ validated against live V19 session |
-| Group membership (`Siemens TIA Openness`) | ✅ user added |
-| **Attach + read/write** | ⏳ needs one **log off/on** to activate the group in the desktop token (see below) |
+| Group membership (`Siemens TIA Openness`) | ✅ user added + activated (log off/on) |
+| **Attach + read live project** | ✅ validated — attached to `PPS_SR_`, read devices/tags/blocks |
+| **Write path (project → CPU → tags → SCL FC/FB → compile)** | ✅ validated — compiled 0 errors / 0 warnings |
 
 ## One-time setup (required before anything can attach)
 
 The calling user must be in the local Windows group **`Siemens TIA Openness`**, and —
-critically — the token must be **refreshed by a log off/on**. Adding to the group is
-done (via `scripts\Enable-OpennessAccess.ps1`, elevated). What remains:
+critically — the token must be **refreshed by a log off/on**. On the reference machine
+this is **done and validated** (`Validate-Full.ps1` passed: live attach + write path +
+compile with 0 errors). On a fresh machine, run once (elevated) then log off/on:
 
 ```
-Log off and back on (or reboot), then:
-  powershell -ExecutionPolicy Bypass -File .\scripts\Validate-Full.ps1
+.\scripts\Enable-OpennessAccess.ps1     # elevated; adds you to the group
+# log off and back on (or reboot), then:
+powershell -ExecutionPolicy Bypass -File .\scripts\Validate-Full.ps1
 ```
 
 Why the log off/on is unavoidable: Windows bakes group membership into the logon token
