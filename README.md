@@ -118,6 +118,7 @@ policy**; writes go to a scratch project.
 
 ## Documentation
 
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — plan for full spec-driven project + HMI automation (Google Sheets → CSV → generate).
 - **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 37-cmdlet reference.
 - **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate).
 - **[docs/framework.md](docs/framework.md)** — generator/architecture design.
