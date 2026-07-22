@@ -66,7 +66,25 @@ project repo's CI.
 - HMI -> `tia-hmi`
 - Connection/session basics + safety rules -> `tia-openness`
 
+## Reverse: adopt an existing project (`Export-TiaToSpec`)
+
+Turn a live PLC into an editable spec folder - tags + modules as CSV, UDTs + blocks as
+SimaticML XML, and a rebuildable `project.json`:
+
+```powershell
+Connect-TiaPortal
+Export-TiaToSpec -OutDir .\adopted\MyMachine -PlcName PLC_1
+# -> data/*.tags.csv, data/*.modules.csv, types/*.xml, blocks/*.xml, project.json
+```
+
+It splits the CPU (`orderNumber`) from the rail and pluggable modules, and skips
+know-how/safety-protected blocks with a warning. Rebuild from the export with
+`Invoke-TiaBuildFromSpec -Path .\adopted\MyMachine\project.json` (imports `typesXml`
+into the TypeGroup and `blocksXml` into the BlockGroup). Great for version-controlling
+an existing machine and diffing changes.
+
 ## Safety
 
 Do generation against your own `-New` instance or a scratch project. Safety (F) blocks
-require the TIA safety program to be unlocked; the engine never bypasses that.
+require the TIA safety program to be unlocked; the engine never bypasses that. The
+generated project is only persisted when `build.save: true` (else it opens empty).

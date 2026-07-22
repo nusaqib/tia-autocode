@@ -178,14 +178,14 @@ existing machine (e.g. `PPS_SR_`) into the spec model and diff future changes.
 
 ## 6. Phases
 
-| Phase | Deliverable | Needs TIA? |
-|---|---|---|
-| **0** | Manifest schema + CSV column contracts + `Test-TiaSpec` offline validator + example project skeleton + tests/CI | No |
-| **1** | CSV readers + UDT/DB/tag synthesizers + manifest-driven `Invoke-TiaBuildFromSpec` + `generated/` snapshots | Yes |
-| **2** | `Export-TiaToSpec` (reverse adoption) | Yes |
-| **3** | HMI tags + connections + parameterized screens + alarms | Yes |
-| **4** | Optional XLSX-workbook import, naming-convention lint, reusable UDT/SCL template library | Mixed |
-| **5** | Private project-repo template (submodule wiring, `build.ps1`, offline-validation CI) + docs | No |
+| Phase | Deliverable | Needs TIA? | Status |
+|---|---|---|---|
+| **0** | Manifest schema + CSV column contracts + `Test-TiaSpec` offline validator + example project skeleton + tests/CI | No | ✅ done |
+| **1** | CSV readers + UDT/DB/tag/module synthesizers + manifest-driven `Invoke-TiaBuildFromSpec` + `generated/` snapshots | Yes | ✅ done (compiles 0/0 live) |
+| **2** | `Export-TiaToSpec` (reverse adoption): tags/modules CSV + UDT/block XML + rebuildable manifest; `typesXml`/`blocksXml` round-trip import | Yes | ✅ done |
+| **3** | HMI tags + connections + parameterized screens + alarms | Yes | planned |
+| **4** | Optional XLSX-workbook import, naming-convention lint, reusable UDT/SCL template library | Mixed | planned |
+| **5** | Private project-repo template (submodule wiring, `build.ps1`, offline-validation CI) + docs | No | planned |
 
 Phase 0 is fully offline and testable — it lands first and locks the contracts
 everything else builds on.

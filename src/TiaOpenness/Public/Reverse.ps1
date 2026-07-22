@@ -28,9 +28,11 @@ function Export-TiaToSpec {
     $blockDir = Join-Path $OutDir 'blocks'
     foreach ($d in $dataDir,$typesDir,$blockDir) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 
-    # --- hardware: split CPU (-> orderNumber) from pluggable modules ---
+    # --- hardware: split CPU (-> orderNumber) from rail + pluggable modules ---
+    # The CPU device-item is named after the PLC; the rail (590/595) is NOT the CPU.
     $items = @(Get-TiaModule -DeviceName $plc.Device)
-    $cpu   = $items | Where-Object { $_.Name -eq $name -or $_.OrderNumber -match '5[0-9]{2}-' } | Select-Object -First 1
+    $cpu   = $items | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+    if (-not $cpu) { $cpu = $items | Where-Object { $_.OrderNumber -notmatch '590-|595-' -and $_.Slot -eq 1 } | Select-Object -First 1 }
     $orderNumber = if ($cpu) { $cpu.OrderNumber } else { $null }
     $modRows = $items | Where-Object { $_ -ne $cpu -and $_.OrderNumber -notmatch '590-|595-' } |
         ForEach-Object { [pscustomobject]@{ Slot = $_.Slot; OrderNumber = ($_.OrderNumber -replace '^OrderNumber:',''); Name = $_.Name; Comment = '' } }
@@ -75,8 +77,9 @@ function Export-TiaToSpec {
     if ($tagRows)     { $plcSpec.tags = @("data/$name.tags.csv") }
     $plcSpec.compile = $true
 
+    $projName = try { (Get-CurrentProject $Project).Name } catch { $name }
     $manifest = [ordered]@{
-        project = [ordered]@{ name = $name; path = "_out/$name" }
+        project = [ordered]@{ name = $projName; path = "_out/$projName" }
         portal  = [ordered]@{ new = $true; ui = $false }
         plcs    = @($plcSpec)
         build   = [ordered]@{ save = $true }
