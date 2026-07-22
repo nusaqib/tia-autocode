@@ -18,6 +18,7 @@ Examples (confirm against your catalog / TIA version):
 
 | CPU | TypeIdentifier |
 |-----|----------------|
+| S7-1515F-2 PN (validated on this machine) | `OrderNumber:6ES7 515-2FM02-0AB0/V2.9` |
 | S7-1511-1 PN | `OrderNumber:6ES7 511-1AK02-0AB0/V2.9` |
 | S7-1516-3 PN/DP | `OrderNumber:6ES7 516-3AN02-0AB0/V2.9` |
 | S7-1214C DC/DC/DC | `OrderNumber:6ES7 214-1AG40-0XB0/V4.4` |

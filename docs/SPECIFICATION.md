@@ -93,22 +93,22 @@ src/TiaOpenness/
 | Domain | Capability | Cmdlets | Status |
 |---|---|---|---|
 | **Setup/diag** | List installed Openness versions; report loaded state | `Get-TiaInstalledVersion`, `Get-TiaOpennessState` | ✅ validated |
-| **Session** | Enumerate running Portals; attach; start headless/UI; detach/close | `Get-TiaSession`, `Connect-TiaPortal`, `Disconnect-TiaPortal` | ✅ enum validated; attach pending re-login |
-| **Project** | Create / open / get / save / close | `New-TiaProject`, `Open-TiaProject`, `Get-TiaProject`, `Save-TiaProject`, `Close-TiaProject` | ⏳ needs live session |
-| **Hardware** | Add CPU by order number; enumerate PLCs (SoftwareContainer) | `New-TiaDevice`, `Get-TiaPlc` | ⏳ |
-| **Tags** | Create/list tag tables & tags (type, address, comment) | `Get-/New-TiaTagTable`, `Get-/New-TiaTag` | ⏳ |
-| **Data types** | Create/list UDTs from SCL `TYPE…END_TYPE` | `Get-TiaType`, `New-TiaType` | ⏳ |
-| **Data blocks** | Global DB from SCL; instance/typed DB "of" FB/UDT | `New-TiaDataBlock` | ⏳ |
-| **Logic blocks** | FC/FB/OB from SCL text or `.scl`; SimaticML XML import; export | `Import-TiaScl`, `New-TiaOb`, `Import-TiaBlockXml`, `Export-TiaBlock`, `Get-TiaBlock` | ⏳ |
-| **Compile** | Compile a block or whole PLC; structured result | `Invoke-TiaCompile` | ⏳ |
-| **Organization** | Nested block folders; delete blocks | `New-/Get-TiaBlockGroup`, `Remove-TiaBlock` | ⏳ |
-| **HMI** | Discover HMI software; introspect API; screens list + XML round-trip | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen` | ⏳ |
-| **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ⏳ (download hardware-facing) |
-| **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ⏳ |
+| **Session** | Enumerate running Portals; attach; start headless/UI; detach/close | `Get-TiaSession`, `Connect-TiaPortal`, `Disconnect-TiaPortal` | ✅ validated (enum + attach + headless start) |
+| **Project** | Create / open / get / save / close | `New-TiaProject`, `Open-TiaProject`, `Get-TiaProject`, `Save-TiaProject`, `Close-TiaProject` | ✅ validated (create + save) |
+| **Hardware** | Add CPU by order number; enumerate PLCs (SoftwareContainer) | `New-TiaDevice`, `Get-TiaPlc` | ✅ validated (added S7-1515F; read live PLC) |
+| **Tags** | Create/list tag tables & tags (type, address, comment) | `Get-/New-TiaTagTable`, `Get-/New-TiaTag` | ✅ validated (created + read) |
+| **Data types** | Create/list UDTs from SCL `TYPE...END_TYPE` | `Get-TiaType`, `New-TiaType` | ☑ implemented (SCL path shared with blocks) |
+| **Data blocks** | Global DB from SCL; instance/typed DB "of" FB/UDT | `New-TiaDataBlock` | ☑ implemented |
+| **Logic blocks** | FC/FB/OB from SCL text or `.scl`; SimaticML XML import; export | `Import-TiaScl`, `New-TiaOb`, `Import-TiaBlockXml`, `Export-TiaBlock`, `Get-TiaBlock` | ✅ validated (imported FC+FB; read blocks) |
+| **Compile** | Compile a block or whole PLC; structured result | `Invoke-TiaCompile` | ✅ validated (0 errors / 0 warnings) |
+| **Organization** | Nested block folders; delete blocks | `New-/Get-TiaBlockGroup`, `Remove-TiaBlock` | ☑ implemented |
+| **HMI** | Discover HMI software; introspect API; screens list + XML round-trip | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen` | ☑ implemented (needs a live HMI to validate) |
+| **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
+| **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
 
-Legend: ✅ verified on this machine · ⏳ implemented, awaiting a live session (post
-log off/on) to validate end-to-end.
+Legend: ✅ validated end-to-end against the live V19 session (2026-07-21) ·
+☑ implemented and loads, not yet exercised against live hardware/HMI.
 
 ---
 
@@ -253,9 +253,10 @@ resolve against `-BaseDir` (defaults to the spec file's folder).
 ## 9. Limitations & roadmap
 
 Current limitations:
-- **Live attach/write validation pending** a one-time Windows **log off/on** (group
-  token refresh). Session enumeration and all offline structure are validated.
-- **`Invoke-TiaDownload`** pre/post delegates are a scaffold — real downloads may need
+- **Validated end-to-end** on the reference machine (2026-07-21): live attach + read
+  of `PPS_SR_`, and a full write path (project -> S7-1515F CPU -> tags -> SCL FC/FB ->
+  compile, 0 errors). Remaining items below are the not-yet-live-exercised pieces.
+- **`Invoke-TiaDownload`** pre/post delegates are a scaffold - real downloads may need
   per-configuration decisions (stop modules, overwrite) tailored to the setup.
 - **HMI tag/connection wrappers** are intentionally not shipped as fixed cmdlets
   because collection names vary by WinCC flavor; use `Show-TiaHmiApi` then add tested

@@ -1,5 +1,9 @@
 # TIA_API — Siemens TIA Portal automatic coding platform
 
+> **Status: validated end-to-end (2026-07-21).** Attached to a live V19 project, read
+> its devices/tags/blocks, and generated a scratch program (CPU → tags → SCL FC/FB →
+> compile, **0 errors**). Repo: `github.com/nusaqib/tia-autocode` · CI: green.
+
 Connect to a running (or headless) **Siemens TIA Portal** session through the
 **Openness** API and program PLCs from code: sessions, projects, devices, tags,
 tag tables, and logic blocks (FC / FB / OB) including **SCL routines**, then compile.

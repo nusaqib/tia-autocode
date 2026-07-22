@@ -80,7 +80,8 @@ Disconnect-TiaPortal
 ```powershell
 Connect-TiaPortal -New -WithUserInterface:$false
 New-TiaProject -Name Line1 -Path C:\work\Line1
-New-TiaDevice  -TypeIdentifier 'OrderNumber:6ES7 512-1SN03-0AB0/V3.0' -Name PLC_1
+# Validated CPU on this machine (S7-1515F-2 PN); swap for your catalog's MLFB:
+New-TiaDevice  -TypeIdentifier 'OrderNumber:6ES7 515-2FM02-0AB0/V2.9' -Name PLC_1
 $plc = (Get-TiaPlc | Select-Object -First 1).PlcSoftware
 ```
 

@@ -4,7 +4,7 @@
   "plcs": [
     {
       "name": "PLC_1",
-      "orderNumber": "OrderNumber:6ES7 512-1SN03-0AB0/V3.0",
+      "orderNumber": "OrderNumber:6ES7 515-2FM02-0AB0/V2.9",
       "tagTables": [
         {
           "name": "IO",
