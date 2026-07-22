@@ -147,6 +147,11 @@ function Resolve-TiaAssembly {
 }
 
 function Get-TiaOpennessState {
+    <#
+    .SYNOPSIS
+        Reports whether the Openness API is loaded, which version, and the resolver's
+        assembly search directories.
+    #>
     [CmdletBinding()] param()
     [pscustomobject]$script:TiaOpennessState
 }

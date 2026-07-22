@@ -54,6 +54,10 @@ function Get-TiaProject {
 }
 
 function Save-TiaProject {
+    <#
+    .SYNOPSIS
+        Saves the current (or a given) TIA project to disk.
+    #>
     [CmdletBinding()] param($Project)
     (Get-CurrentProject $Project).Save()
 }

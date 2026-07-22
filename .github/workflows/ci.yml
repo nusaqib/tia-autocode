@@ -11,6 +11,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Environment diagnostics
+        shell: cmd
+        run: |
+          powershell -NoProfile -Command "$PSVersionTable | Format-List; Get-ExecutionPolicy -List"
+
       - name: Run offline module self-test (Windows PowerShell 5.1)
-        shell: powershell
-        run: .\tests\Test-Module.ps1
+        # Invoke via cmd so we control the host and execution policy explicitly.
+        # -File propagates the script's exit code; -ExecutionPolicy Bypass avoids
+        # the runner's machine policy blocking an unsigned checked-out script.
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests\Test-Module.ps1

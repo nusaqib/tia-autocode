@@ -8,6 +8,8 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $fail = 0
+Write-Host "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition)) on $([Environment]::OSVersion.VersionString)"
+Write-Host "Repo root: $root`n"
 function Check($name, [scriptblock]$test) {
     try {
         $r = & $test
@@ -29,11 +31,13 @@ Check "manifest FunctionsToExport matches exported set" {
     -not (Compare-Object $declared $actual)
 }
 
-# Every public function should have synopsis help (documentation discipline).
+# Every public function should carry comment-based help (documentation discipline).
+# Inspect the function definition text directly — deterministic and independent of
+# the Get-Help subsystem / help-file state on the host.
 foreach ($c in $cmds) {
-    Check "help: $($c.Name) has a synopsis" {
-        $h = Get-Help $c.Name -ErrorAction SilentlyContinue
-        $h.Synopsis -and $h.Synopsis.Trim() -and ($h.Synopsis -notlike "$($c.Name)*")
+    Check "help: $($c.Name) has a .SYNOPSIS" {
+        $def = (Get-Command $c.Name -ErrorAction Stop).Definition
+        $def -match '(?im)^\s*\.SYNOPSIS\b'
     }
 }
 
