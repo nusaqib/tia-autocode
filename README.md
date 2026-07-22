@@ -14,25 +14,32 @@ via the Framework `csc.exe` / MSBuild (net48).
 | Piece | State |
 |-------|-------|
 | Environment probe (versions, DLLs, group, live session) | ✅ validated |
-| Module: connect / project / device / tags / blocks / compile | ✅ built, loads, 21 cmdlets exported |
+| Module: connect / project / device / tags / types / DBs / blocks / HMI / compile / export / download | ✅ built, loads, **37 cmdlets** exported |
+| Declarative generator (`Invoke-TiaBuildFromSpec`) | ✅ built |
 | Session enumeration (`GetProcesses`) | ✅ validated against live V19 session |
-| **Attach + read/write** | ⛔ **blocked on Windows group membership** (one-time admin step below) |
+| Group membership (`Siemens TIA Openness`) | ✅ user added |
+| **Attach + read/write** | ⏳ needs one **log off/on** to activate the group in the desktop token (see below) |
 
 ## One-time setup (required before anything can attach)
 
-The calling user must be in the local Windows group **`Siemens TIA Openness`**.
-It exists on this machine but currently has **no members**, so `Attach()` fails with
-`EngineeringSecurityException`. Fix it **once**, elevated, then **log off and back on**:
+The calling user must be in the local Windows group **`Siemens TIA Openness`**, and —
+critically — the token must be **refreshed by a log off/on**. Adding to the group is
+done (via `scripts\Enable-OpennessAccess.ps1`, elevated). What remains:
 
-```powershell
-# Right-click Windows PowerShell -> Run as administrator, then:
-cd e:\TIA_Portal\TIA_API
-powershell -ExecutionPolicy Bypass -File .\scripts\Enable-OpennessAccess.ps1
-# ...then LOG OFF and back on (or reboot) so your token includes the new group.
+```
+Log off and back on (or reboot), then:
+  powershell -ExecutionPolicy Bypass -File .\scripts\Validate-Full.ps1
 ```
 
-Verify: `Get-TiaSession` should list sessions, and `Connect-TiaPortal` should attach
-without a security error.
+Why the log off/on is unavoidable: Windows bakes group membership into the logon token
+at logon time. A `runas` shell *does* pick up the group, but it still can't (a) attach
+to a TIA Portal owned by the old desktop token, nor (b) answer the first-use Openness
+whitelist dialog from its window station — both were verified. Only a real re-login
+puts the group into your interactive desktop token, which is what TIA Portal and
+Openness clients run under.
+
+Verify after re-login: `Get-TiaSession` lists sessions and `Connect-TiaPortal` attaches
+without a security error; `Validate-Full.ps1` then exercises the whole write path.
 
 ## Quick start
 
@@ -64,12 +71,25 @@ Save-TiaProject
 ```
 src/TiaOpenness/         PowerShell module (the platform)
   Private/               assembly resolver, session state, helpers
-  Public/                exported cmdlets (Connect/Project/Tags/Blocks)
-scripts/                 setup + demo scripts
+  Public/                exported cmdlets: Connect, Project, Tags, Types,
+                         Blocks, Organization, Hmi, Lifecycle, Build
+scripts/                 setup, demo, and validation scripts
+specs/                   declarative build specs (demo.json)
 templates/               sample SCL + SimaticML XML
-docs/                    openness-cheatsheet.md, adding-a-device.md
-.claude/skills/          the `tia-openness` skill (expertise for future sessions)
+docs/                    openness-cheatsheet.md, framework.md, adding-a-device.md
+.claude/skills/          tia-openness + tia-hmi skills (expertise for future sessions)
 ```
+
+## Declarative generation
+
+Describe a program as JSON and build it in one call:
+
+```powershell
+Invoke-TiaBuildFromSpec -Path .\specs\demo.json
+```
+
+It creates the portal/project, adds the CPU, and generates tag tables, UDTs, SCL
+blocks, data blocks, and HMI screens, then compiles. See `docs/framework.md`.
 
 ## This machine
 
