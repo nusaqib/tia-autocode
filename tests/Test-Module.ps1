@@ -92,6 +92,18 @@ Check "broken fixture spec is rejected (incl. module errors)" {
     (-not $r.Ok) -and $r.Errors.Count -ge 5 -and $modErr
 }
 
+# Phase 4: dependency-free XLSX reader + xlsx-backed spec validation (offline).
+Check "Import-TiaXlsx reads a shared-strings workbook into rows" {
+    $mod = Get-Module TiaOpenness
+    $rows = & $mod { Import-TiaXlsx -Path (Join-Path $args[0] 'tests\fixtures\xlsx-spec\data\PLC_1.xlsx') -Sheet Tags } $root
+    $rows.Count -eq 3 -and $rows[0].Name -eq 'Run' -and $rows[0].DataType -eq 'Bool' -and $rows[2].Address -eq '%I0.0'
+}
+Check "spec with tags from an .xlsx#Sheet ref validates clean" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\xlsx-spec\project.yaml')
+    if (-not $r.Ok) { Write-Host "    errors: $($r.Errors -join '; ')" -ForegroundColor Red }
+    $r.Ok -and $r.Errors.Count -eq 0
+}
+
 # Phase 3: HMI spec validation (offline).
 Check "HMI spec fixture validates clean" {
     $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\hmi-spec\project.yaml')

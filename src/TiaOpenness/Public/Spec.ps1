@@ -32,13 +32,16 @@ function Test-TiaSpec {
 
     if (-not $spec.project -or -not $spec.project.name) { Err "project.name is required" }
 
-    function Test-Columns($csvPath, $required, $label) {
-        if (-not (Test-Path $csvPath)) { Err "$label file not found: $csvPath"; return $null }
-        $rows = @(Import-Csv $csvPath)
-        if ($rows.Count -eq 0) { Warn "$label file is empty: $csvPath"; return @() }
+    # Accepts a .csv path or an .xlsx[#Sheet] ref (both relative to the manifest folder).
+    function Test-Columns($ref, $required, $label) {
+        $path = Resolve-TiaRef $ref $base
+        if (-not (Test-Path $path)) { Err "$label file not found: $path"; return $null }
+        try { $rows = @(Read-TiaRows -Ref $ref -BaseDir $base) }
+        catch { Err "$label ($([System.IO.Path]::GetFileName($path))): $($_.Exception.Message)"; return $null }
+        if ($rows.Count -eq 0) { Warn "$label file is empty: $path"; return @() }
         $cols = $rows[0].PSObject.Properties.Name
         foreach ($rc in $required) {
-            if ($cols -notcontains $rc) { Err "$label ($([System.IO.Path]::GetFileName($csvPath))): missing required column '$rc'" }
+            if ($cols -notcontains $rc) { Err "$label ($([System.IO.Path]::GetFileName($path))): missing required column '$rc'" }
         }
         return $rows
     }
@@ -59,14 +62,14 @@ function Test-TiaSpec {
         $udtNames = New-Object System.Collections.Generic.List[string]
         foreach ($u in @($plc.udts)) {
             if (-not $u) { continue }
-            $rows = Test-Columns (Resolve-Rel $u) @('UDT','Member','DataType') "UDT[$pn]"
+            $rows = Test-Columns $u @('UDT','Member','DataType') "UDT[$pn]"
             if ($null -eq $rows) { continue }
             foreach ($r in $rows) { if ($r.UDT) { [void]$udtNames.Add($r.UDT.Trim().ToLowerInvariant()) } }
         }
         $udtSet = @($udtNames | Select-Object -Unique)
         foreach ($u in @($plc.udts)) {
             if (-not $u) { continue }
-            $rows = @(Import-Csv (Resolve-Rel $u) -ErrorAction SilentlyContinue)
+            $rows = @(try { Read-TiaRows -Ref $u -BaseDir $base } catch { @() })
             foreach ($r in $rows) {
                 if (-not $r.Member) { Err "UDT[$pn] $($r.UDT): row with empty Member" }
                 Test-TypeRef $r.DataType $udtSet "UDT[$pn] $($r.UDT).$($r.Member)"
@@ -89,7 +92,7 @@ function Test-TiaSpec {
         # --- Modules (rack layout) ---
         foreach ($mod in @($plc.modules)) {
             if (-not $mod) { continue }
-            $rows = Test-Columns (Resolve-Rel $mod) @('Slot','OrderNumber','Name') "Modules[$pn]"
+            $rows = Test-Columns $mod @('Slot','OrderNumber','Name') "Modules[$pn]"
             if ($null -eq $rows) { continue }
             $slots = @{}
             foreach ($r in $rows) {
@@ -103,7 +106,7 @@ function Test-TiaSpec {
         # --- Tags ---
         foreach ($t in @($plc.tags)) {
             if (-not $t) { continue }
-            $rows = Test-Columns (Resolve-Rel $t) @('TagTable','Name','DataType','Address') "Tags[$pn]"
+            $rows = Test-Columns $t @('TagTable','Name','DataType','Address') "Tags[$pn]"
             if ($null -eq $rows) { continue }
             $seen = @{}
             foreach ($r in $rows) {
@@ -120,7 +123,7 @@ function Test-TiaSpec {
         # --- DBs ---
         $dbNames = @{}
         if ($plc.dbs -and $plc.dbs.blocks) {
-            $rows = Test-Columns (Resolve-Rel $plc.dbs.blocks) @('DBName','Kind') "DBs[$pn]"
+            $rows = Test-Columns $plc.dbs.blocks @('DBName','Kind') "DBs[$pn]"
             if ($rows) {
                 foreach ($r in $rows) {
                     if (-not $r.DBName) { Err "DBs[$pn]: row with empty DBName"; continue }
@@ -140,7 +143,7 @@ function Test-TiaSpec {
             }
         }
         if ($plc.dbs -and $plc.dbs.members) {
-            $rows = Test-Columns (Resolve-Rel $plc.dbs.members) @('DBName','Member','DataType') "DBMembers[$pn]"
+            $rows = Test-Columns $plc.dbs.members @('DBName','Member','DataType') "DBMembers[$pn]"
             if ($rows) {
                 foreach ($r in $rows) {
                     if ($dbNames.Count -and -not $dbNames.ContainsKey($r.DBName)) {
@@ -168,7 +171,7 @@ function Test-TiaSpec {
         }
         foreach ($t in @($hmi.tags)) {
             if (-not ($t -is [string])) { continue }
-            $rows = Test-Columns (Resolve-Rel $t) @('Name','DataType') "HMITags[$hn]"
+            $rows = Test-Columns $t @('Name','DataType') "HMITags[$hn]"
             if ($null -eq $rows) { continue }
             $seen = @{}
             foreach ($r in $rows) {

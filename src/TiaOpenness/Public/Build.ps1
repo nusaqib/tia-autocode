@@ -39,7 +39,7 @@ function Invoke-TiaBuildFromSpec {
     function Step($m){ $steps.Add($m); Write-Host "  + $m" }
     function Fail($m){ $errs.Add($m);  Write-Warning $m }
     function Rel($p){ if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $BaseDir $p } }
-    function Rows($ref){ @(Import-Csv (Rel $ref)) }   # CSV file ref -> rows
+    function Rows($ref){ @(Read-TiaRows -Ref $ref -BaseDir $BaseDir) }   # .csv or .xlsx#Sheet -> rows
 
     # 1) Portal
     if ($Spec.portal -and $Spec.portal.new) {

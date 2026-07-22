@@ -19,5 +19,5 @@ $publicFns = Get-ChildItem (Join-Path $here 'Public') -Filter '*.ps1' -Recurse |
             ForEach-Object { $_.Name }
     }
 # A couple of diagnostics live in Private but are intentionally public.
-$publicFns = @($publicFns) + @('Get-TiaInstalledVersion','Get-TiaOpennessState')
+$publicFns = @($publicFns) + @('Get-TiaInstalledVersion','Get-TiaOpennessState','Import-TiaXlsx')
 Export-ModuleMember -Function ($publicFns | Select-Object -Unique)

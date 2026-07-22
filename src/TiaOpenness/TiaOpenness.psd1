@@ -20,7 +20,7 @@
         'Get-TiaHmi','Show-TiaHmiApi','Get-TiaScreen','Export-TiaScreen','Import-TiaScreen',
         'New-TiaHmiDevice','Get-TiaHmiConnection','Get-TiaHmiTag','New-TiaHmiTag',
         'Export-TiaHmiTagTable','Import-TiaHmiTagTable','Export-TiaHmiAlarms','Import-TiaHmiAlarms',
-        'Invoke-TiaBuildFromSpec','Export-TiaToSpec',
+        'Invoke-TiaBuildFromSpec','Export-TiaToSpec','Import-TiaXlsx',
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',
         'Test-TiaSpec'
     )

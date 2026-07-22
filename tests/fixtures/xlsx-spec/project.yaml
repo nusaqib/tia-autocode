@@ -1,0 +1,11 @@
+# XLSX-import fixture for Test-TiaSpec (must PASS): tags come from an .xlsx workbook
+# sheet (data/PLC_1.xlsx#Tags) instead of a .csv - exercises the Phase 4 reader.
+project:
+  name: XlsxDemo
+portal:
+  new: true
+  ui: false
+plcs:
+  - name: PLC_1
+    tags:
+      - data/PLC_1.xlsx#Tags
