@@ -3,6 +3,8 @@ project:
   name: Broken
 plcs:
   - name: PLC_1
+    modules:
+      - data/modules.csv
     tags:
       - data/tags.csv
     udts:

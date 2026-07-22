@@ -1,12 +1,7 @@
 # Spec.ps1 - offline validation of a tia-autocode project spec (Phase 0).
 # Test-TiaSpec reads the manifest + CSV data and checks structure, references, and
 # datatypes WITHOUT touching TIA Portal. Run it before every build (and in CI).
-
-$script:TiaPrimitiveTypes = @(
-    'Bool','Byte','Word','DWord','LWord','SInt','USInt','Int','UInt','DInt','UDInt',
-    'LInt','ULInt','Real','LReal','Time','LTime','S5Time','Date','Time_Of_Day','TOD',
-    'Date_And_Time','DT','DTL','LDT','Char','WChar','String','WString'
-) | ForEach-Object { $_.ToLowerInvariant() }
+# (Primitive-type set + Test-TiaPrimitive live in Private/TiaSynth.ps1.)
 
 function Test-TiaSpec {
     <#
@@ -49,8 +44,8 @@ function Test-TiaSpec {
     }
     function Test-TypeRef($dt, $udtNames, $ctx) {
         if (-not $dt) { Err "${ctx}: empty DataType"; return }
+        if (Test-TiaPrimitive $dt) { return }
         $clean = $dt.Trim().Trim('"').ToLowerInvariant()
-        if ($script:TiaPrimitiveTypes -contains $clean) { return }
         if ($udtNames -contains $clean) { return }
         Err "${ctx}: datatype '$dt' is neither a primitive nor a defined UDT"
     }
@@ -87,6 +82,19 @@ function Test-TiaSpec {
             }
         }
         $fbSet = @($fbNames | Select-Object -Unique)
+
+        # --- Modules (rack layout) ---
+        foreach ($mod in @($plc.modules)) {
+            $rows = Test-Columns (Resolve-Rel $mod) @('Slot','OrderNumber','Name') "Modules[$pn]"
+            if ($null -eq $rows) { continue }
+            $slots = @{}
+            foreach ($r in $rows) {
+                if ("$($r.Slot)" -notmatch '^\d+$') { Err "Modules[$pn] $($r.Name): Slot '$($r.Slot)' must be an integer" }
+                elseif ($slots.ContainsKey($r.Slot)) { Err "Modules[$pn]: duplicate Slot $($r.Slot)" } else { $slots[$r.Slot] = $true }
+                if (-not $r.OrderNumber) { Err "Modules[$pn] $($r.Name): OrderNumber required" }
+                if (-not $r.Name) { Err "Modules[$pn] slot $($r.Slot): Name required" }
+            }
+        }
 
         # --- Tags ---
         foreach ($t in @($plc.tags)) {

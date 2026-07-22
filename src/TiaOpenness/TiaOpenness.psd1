@@ -12,6 +12,7 @@
         'Get-TiaSession','Connect-TiaPortal','Disconnect-TiaPortal',
         'New-TiaProject','Open-TiaProject','Get-TiaProject','Save-TiaProject','Close-TiaProject',
         'New-TiaDevice','Get-TiaPlc',
+        'Get-TiaDeviceList','Get-TiaModule','Add-TiaModule',
         'Get-TiaTagTable','Get-TiaTag','New-TiaTagTable','New-TiaTag',
         'Get-TiaBlock','Import-TiaScl','Import-TiaBlockXml','Export-TiaBlock','Invoke-TiaCompile',
         'Get-TiaType','New-TiaType','New-TiaDataBlock',

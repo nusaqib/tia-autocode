@@ -9,6 +9,8 @@ portal:
 plcs:
   - name: PLC_1
     orderNumber: "OrderNumber:6ES7 515-2FM02-0AB0/V2.9"   # S7-1515F-2 PN
+    modules:
+      - data/PLC_1.modules.csv                             # rack layout (DI/DQ/AI)
     tags:
       - data/PLC_1.tags.csv
     udts:

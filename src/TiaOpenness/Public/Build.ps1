@@ -1,36 +1,25 @@
-﻿# Build.ps1 - declarative project generator.
-# Turn a JSON/hashtable spec into a materialized TIA program: project -> device(s)
-# -> tags -> UDTs -> code blocks -> data blocks -> compile, and optional HMI screens.
-# This is the "automatic coding platform" entry point.
+# Build.ps1 - declarative project generator (manifest + spreadsheets).
+# Invoke-TiaBuildFromSpec materializes a full program from a YAML/JSON manifest that
+# references CSV data (tags, UDTs, DBs, modules) and SCL logic files. It also still
+# accepts the older inline format (arrays of objects) for backward compatibility.
 
 function Invoke-TiaBuildFromSpec {
     <#
     .SYNOPSIS
-        Builds (or updates) a TIA project from a declarative spec.
-    .PARAMETER Path
-        Path to a JSON spec file. (Alternatively pass -Spec a hashtable/object.)
-    .PARAMETER Spec
-        Spec object (from ConvertFrom-Json or a PowerShell hashtable).
+        Builds (or updates) a TIA project from a manifest + spreadsheet/SCL data.
     .DESCRIPTION
-        Spec shape (all sections optional except what you want built):
-          {
-            "portal":  { "new": true, "ui": false },
-            "project": { "name": "Demo", "path": "C:\\temp\\Demo", "openIfExists": true },
-            "plcs": [{
-              "name": "PLC_1",
-              "orderNumber": "OrderNumber:6ES7 512-1SN03-0AB0/V3.0",
-              "tagTables": [{ "name":"IO", "tags":[
-                  {"name":"Start_PB","dataType":"Bool","address":"%I0.0","comment":"start"} ]}],
-              "types":  [{ "scl":"TYPE \"MotorData\" STRUCT Speed:Real; END_STRUCT; END_TYPE" }],
-              "blocks": [{ "sclFile":"templates\\Scale.scl" }, { "scl":"FUNCTION_BLOCK ..." }],
-              "dataBlocks": [{ "name":"Motor1_DB", "ofType":"MotorStarter" }],
-              "compile": true
-            }],
-            "hmis": [{ "name":"HMI_1", "screens":[{ "importXml":"screens\\Start.xml" }] }],
-            "save": true
-          }
+        Reads a manifest (project.yaml/.json), then per PLC generates, in order:
+        device -> modules (rack layout) -> UDTs -> DBs -> SCL logic -> tags -> compile.
+        Tabular sections may be CSV file references (Phase 1) or inline objects (legacy).
+        See docs/ROADMAP.md for the manifest + CSV column contracts.
+    .PARAMETER Path
+        Path to the manifest file (.yaml/.yml/.json).
+    .PARAMETER Spec
+        A manifest object (already parsed) instead of -Path.
+    .PARAMETER BaseDir
+        Base for resolving relative data/logic paths (defaults to the manifest folder).
     .EXAMPLE
-        Invoke-TiaBuildFromSpec -Path .\specs\demo.json
+        Invoke-TiaBuildFromSpec -Path .\examples\example-project\project.yaml
     #>
     [CmdletBinding(DefaultParameterSetName='Path')]
     param(
@@ -39,30 +28,31 @@ function Invoke-TiaBuildFromSpec {
         [string]$BaseDir
     )
     if ($PSCmdlet.ParameterSetName -eq 'Path') {
-        if (-not (Test-Path $Path)) { throw "Spec file not found: $Path" }
+        if (-not (Test-Path $Path)) { throw "Manifest not found: $Path" }
         if (-not $BaseDir) { $BaseDir = Split-Path (Resolve-Path $Path) -Parent }
-        $Spec = Get-Content $Path -Raw | ConvertFrom-Json
+        $Spec = Read-TiaManifest $Path
     }
     if (-not $BaseDir) { $BaseDir = (Get-Location).Path }
 
-    $report = [ordered]@{ Steps = New-Object System.Collections.Generic.List[string]; Errors = New-Object System.Collections.Generic.List[string] }
-    function Step($m){ $report.Steps.Add($m); Write-Verbose $m; Write-Host "  + $m" }
-    function Fail($m){ $report.Errors.Add($m); Write-Warning $m }
-    function ResolvePath($p){ if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $BaseDir $p } }
+    $steps = New-Object System.Collections.Generic.List[string]
+    $errs  = New-Object System.Collections.Generic.List[string]
+    function Step($m){ $steps.Add($m); Write-Host "  + $m" }
+    function Fail($m){ $errs.Add($m);  Write-Warning $m }
+    function Rel($p){ if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $BaseDir $p } }
+    function Rows($ref){ @(Import-Csv (Rel $ref)) }   # CSV file ref -> rows
 
     # 1) Portal
     if ($Spec.portal -and $Spec.portal.new) {
         $ui = [bool]$Spec.portal.ui
         Connect-TiaPortal -New -WithUserInterface:$ui | Out-Null
         Step "started new Portal (ui=$ui)"
-    } elseif (-not (Get-TiaOpennessState).Loaded -or -not $script:TiaSession.Portal) {
-        Connect-TiaPortal | Out-Null
-        Step "attached to running Portal"
+    } elseif (-not $script:TiaSession.Portal) {
+        Connect-TiaPortal | Out-Null; Step "attached to running Portal"
     }
 
     # 2) Project
     if ($Spec.project) {
-        $pname = $Spec.project.name; $ppath = ResolvePath $Spec.project.path
+        $pname = $Spec.project.name; $ppath = Rel $Spec.project.path
         $apFile = Get-ChildItem $ppath -Filter "$pname.ap*" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($apFile -and $Spec.project.openIfExists) {
             Open-TiaProject -ProjectFile $apFile.FullName | Out-Null; Step "opened project $pname"
@@ -72,64 +62,107 @@ function Invoke-TiaBuildFromSpec {
         }
     }
 
-    # 3) PLCs
-    foreach ($plcSpec in @($Spec.plcs)) {
-        if (-not $plcSpec) { continue }
+    foreach ($plc in @($Spec.plcs)) {
+        if (-not $plc) { continue }
         try {
-            $existing = Get-TiaPlc -Name $plcSpec.name | Select-Object -First 1
-            if (-not $existing -and $plcSpec.orderNumber) {
-                New-TiaDevice -TypeIdentifier $plcSpec.orderNumber -Name $plcSpec.name | Out-Null
-                Step "added CPU $($plcSpec.name) ($($plcSpec.orderNumber))"
+            # --- device (CPU) ---
+            $existing = Get-TiaPlc -Name $plc.name | Select-Object -First 1
+            if (-not $existing -and $plc.orderNumber) {
+                New-TiaDevice -TypeIdentifier $plc.orderNumber -Name $plc.name | Out-Null
+                Step "added CPU $($plc.name) ($($plc.orderNumber))"
             }
-            $sw = (Get-TiaPlc -Name $plcSpec.name | Select-Object -First 1).PlcSoftware
-            if (-not $sw) { $sw = (Get-TiaPlc | Select-Object -First 1).PlcSoftware }
-            if (-not $sw) { Fail "no PLC for spec '$($plcSpec.name)'"; continue }
 
-            foreach ($tt in @($plcSpec.tagTables)) {
-                if (-not $tt) { continue }
-                foreach ($tag in @($tt.tags)) {
-                    New-TiaTag -Plc $sw -TagTable $tt.name -Name $tag.name -DataType $tag.dataType -Address $tag.address -Comment $tag.comment | Out-Null
+            # --- modules (rack layout) ---
+            foreach ($mref in @($plc.modules)) {
+                if (-not $mref) { continue }
+                $rows = if ($mref -is [string]) { Rows $mref } else { @($mref) }
+                foreach ($r in $rows) {
+                    try {
+                        Add-TiaModule -DeviceName $plc.name -Slot ([int]$r.Slot) -OrderNumber $r.OrderNumber -Name $r.Name | Out-Null
+                        Step "module $($plc.name)[slot $($r.Slot)] = $($r.Name)"
+                    } catch { Fail "module $($plc.name)[slot $($r.Slot)]: $($_.Exception.Message)" }
                 }
-                Step "tags: $($tt.name) (+$(@($tt.tags).Count))"
             }
-            foreach ($t in @($plcSpec.types)) {
-                if (-not $t) { continue }
-                if ($t.sclFile) { New-TiaType -Plc $sw -Path (ResolvePath $t.sclFile) | Out-Null } else { New-TiaType -Plc $sw -Scl $t.scl | Out-Null }
-                Step "UDT imported"
+
+            $sw = (Get-TiaPlc -Name $plc.name | Select-Object -First 1).PlcSoftware
+            if (-not $sw) { $sw = (Get-TiaPlc | Select-Object -First 1).PlcSoftware }
+            if (-not $sw) { Fail "no PLC software for '$($plc.name)'"; continue }
+
+            # --- UDTs (CSV -> SCL, or inline {scl}) ---
+            foreach ($uref in @($plc.udts) + @($plc.types)) {
+                if (-not $uref) { continue }
+                if ($uref -is [string]) {
+                    $scl = ConvertTo-TiaUdtScl (Rows $uref)
+                    if ($scl.Trim()) { Import-TiaScl -Plc $sw -Scl $scl | Out-Null; Step "UDTs from $uref" }
+                } elseif ($uref.scl) { Import-TiaScl -Plc $sw -Scl $uref.scl | Out-Null; Step "UDT (inline)" }
+                elseif ($uref.sclFile) { New-TiaType -Plc $sw -Path (Rel $uref.sclFile) | Out-Null; Step "UDT file" }
             }
-            foreach ($b in @($plcSpec.blocks)) {
-                if (-not $b) { continue }
-                if ($b.sclFile) { Import-TiaScl -Plc $sw -Path (ResolvePath $b.sclFile) | Out-Null } else { Import-TiaScl -Plc $sw -Scl $b.scl | Out-Null }
-                Step "block imported"
+
+            # --- DBs (CSV blocks+members -> SCL, or inline) ---
+            if ($plc.dbs -and $plc.dbs.blocks) {
+                $blocks  = Rows $plc.dbs.blocks
+                $members = if ($plc.dbs.members) { Rows $plc.dbs.members } else { @() }
+                foreach ($b in $blocks) {
+                    $mem = @($members | Where-Object { $_.DBName -eq $b.DBName })
+                    $scl = ConvertTo-TiaDbScl $b $mem
+                    Import-TiaScl -Plc $sw -Scl $scl | Out-Null; Step "DB $($b.DBName) ($($b.Kind))"
+                }
             }
-            foreach ($db in @($plcSpec.dataBlocks)) {
+            foreach ($db in @($plc.dataBlocks)) {   # legacy inline
                 if (-not $db) { continue }
-                if ($db.ofType) { New-TiaDataBlock -Plc $sw -Name $db.name -OfType $db.ofType | Out-Null } else { New-TiaDataBlock -Plc $sw -Scl $db.scl | Out-Null }
-                Step "DB $($db.name)"
+                if ($db.ofType) { New-TiaDataBlock -Plc $sw -Name $db.name -OfType $db.ofType | Out-Null }
+                elseif ($db.scl) { New-TiaDataBlock -Plc $sw -Scl $db.scl | Out-Null }
+                Step "DB $($db.name) (inline)"
             }
-            if ($plcSpec.compile) {
+
+            # --- logic (SCL files) ---
+            foreach ($lref in @($plc.logic) + @($plc.blocks)) {
+                if (-not $lref) { continue }
+                if ($lref -is [string]) { Import-TiaScl -Plc $sw -Path (Rel $lref) | Out-Null; Step "logic $lref" }
+                elseif ($lref.sclFile) { Import-TiaScl -Plc $sw -Path (Rel $lref.sclFile) | Out-Null; Step "logic file" }
+                elseif ($lref.scl) { Import-TiaScl -Plc $sw -Scl $lref.scl | Out-Null; Step "logic (inline)" }
+            }
+
+            # --- tags (CSV rows or inline objects) ---
+            foreach ($tref in @($plc.tags)) {
+                if (-not $tref) { continue }
+                $rows = if ($tref -is [string]) { Rows $tref } else { @($tref) }
+                $n = 0
+                foreach ($r in $rows) {
+                    $tt = if ($r.TagTable) { $r.TagTable } else { 'Default tag table' }
+                    New-TiaTag -Plc $sw -TagTable $tt -Name $r.Name -DataType $r.DataType -Address $r.Address -Comment $r.Comment | Out-Null
+                    $n++
+                }
+                Step "tags (+$n)$(if($tref -is [string]){" from $tref"})"
+            }
+
+            if ($plc.compile) {
                 $c = Invoke-TiaCompile -Plc $sw
-                Step "compiled $($plcSpec.name): State=$($c.State) Errors=$($c.Errors) Warnings=$($c.Warnings)"
+                Step "compiled $($plc.name): State=$($c.State) Errors=$($c.Errors) Warnings=$($c.Warnings)"
                 if ($c.Errors -gt 0) { $c.Messages | Where-Object { $_ -like 'Error*' } | ForEach-Object { Fail $_ } }
             }
-        } catch { Fail "PLC '$($plcSpec.name)': $($_.Exception.Message)" }
+        } catch { Fail "PLC '$($plc.name)': $($_.Exception.Message)" }
     }
 
-    # 4) HMIs (screen import is the supported authoring path)
-    foreach ($hmiSpec in @($Spec.hmis)) {
-        if (-not $hmiSpec) { continue }
+    # HMIs (screen XML import)
+    foreach ($hmi in @($Spec.hmis)) {
+        if (-not $hmi) { continue }
         try {
-            foreach ($scr in @($hmiSpec.screens)) {
-                if ($scr.importXml) { Import-TiaScreen -Hmi $hmiSpec.name -Path (ResolvePath $scr.importXml) -Overwrite | Out-Null; Step "HMI screen imported" }
+            foreach ($scr in @($hmi.screens)) {
+                $p = if ($scr -is [string]) { $scr } else { $scr.importXml }
+                if ($p) { Import-TiaScreen -Hmi $hmi.name -Path (Rel $p) -Overwrite | Out-Null; Step "HMI screen $p" }
             }
-        } catch { Fail "HMI '$($hmiSpec.name)': $($_.Exception.Message)" }
+        } catch { Fail "HMI '$($hmi.name)': $($_.Exception.Message)" }
     }
 
-    if ($Spec.save) { Save-TiaProject; Step "saved project" }
-
-    [pscustomobject]@{
-        Ok       = ($report.Errors.Count -eq 0)
-        Steps    = @($report.Steps)
-        Errors   = @($report.Errors)
+    # Snapshot (optional) + save
+    if ($Spec.build -and $Spec.build.snapshotDir) {
+        try {
+            foreach ($p in (Get-TiaPlc)) { Export-TiaProgram -Plc $p.PlcSoftware -OutDir (Join-Path (Rel $Spec.build.snapshotDir) $p.Name) | Out-Null }
+            Step "snapshot -> $($Spec.build.snapshotDir)"
+        } catch { Fail "snapshot: $($_.Exception.Message)" }
     }
+    if (($Spec.save) -or ($Spec.build -and $Spec.build.save)) { Save-TiaProject; Step "saved project" }
+
+    [pscustomobject]@{ Ok = ($errs.Count -eq 0); Steps = @($steps); Errors = @($errs) }
 }

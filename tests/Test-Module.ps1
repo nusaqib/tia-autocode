@@ -57,18 +57,39 @@ foreach ($c in $cmds) {
 
 # Core cmdlets must exist by name (guards against accidental removal/rename).
 $core = 'Connect-TiaPortal','Get-TiaPlc','New-TiaTag','Import-TiaScl','Invoke-TiaCompile',
-        'New-TiaDataBlock','Get-TiaHmi','Invoke-TiaBuildFromSpec','Export-TiaProgram','Test-TiaSpec'
+        'New-TiaDataBlock','Get-TiaHmi','Invoke-TiaBuildFromSpec','Export-TiaProgram','Test-TiaSpec',
+        'Add-TiaModule','Get-TiaModule','Get-TiaDeviceList'
 foreach ($n in $core) { Check "core cmdlet present: $n" { [bool](Get-Command $n -ErrorAction SilentlyContinue) } }
+
+# Phase 1: CSV -> SCL synthesizers (Private; call in module scope).
+$mod = Get-Module TiaOpenness
+Check "UDT synthesizer emits TYPE/END_TYPE with array + UDT ref" {
+    $rows = Import-Csv (Join-Path $root 'examples\example-project\data\PLC_1.udts.csv')
+    $scl = & $mod { param($r) ConvertTo-TiaUdtScl $r } $rows
+    $scl -match 'TYPE "MotorData"' -and $scl -match 'END_TYPE' -and $scl -match 'Array\[0\.\.9\] of Real'
+}
+Check "DB synthesizer emits instance DB body" {
+    $b = (Import-Csv (Join-Path $root 'examples\example-project\data\PLC_1.dbs.blocks.csv') | Where-Object DBName -eq 'Motor1_DB')
+    $scl = & $mod { param($blk) ConvertTo-TiaDbScl $blk $null } $b
+    $scl -match 'DATA_BLOCK "Motor1_DB"' -and $scl -match '"MotorStarter"' -and $scl -match 'END_DATA_BLOCK'
+}
+Check "DB synthesizer emits global VAR block with UDT member" {
+    $b = (Import-Csv (Join-Path $root 'examples\example-project\data\PLC_1.dbs.blocks.csv') | Where-Object DBName -eq 'Settings')
+    $m = @(Import-Csv (Join-Path $root 'examples\example-project\data\PLC_1.dbs.members.csv') | Where-Object DBName -eq 'Settings')
+    $scl = & $mod { param($blk,$mem) ConvertTo-TiaDbScl $blk $mem } $b $m
+    $scl -match 'VAR' -and $scl -match 'Motor1 : "MotorData"' -and $scl -match 'END_VAR'
+}
 
 # Phase 0: offline spec validation (no TIA needed).
 Check "example project spec validates clean" {
     $r = Test-TiaSpec -Path (Join-Path $root 'examples\example-project\project.yaml')
     $r.Ok -and $r.Errors.Count -eq 0
 }
-Check "broken fixture spec is rejected (>=3 errors)" {
+Check "broken fixture spec is rejected (incl. module errors)" {
     $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\broken-project\project.yaml')
     if ($r.Ok) { Write-Host "    expected failure but got Ok" -ForegroundColor Red }
-    (-not $r.Ok) -and $r.Errors.Count -ge 3
+    $modErr = @($r.Errors | Where-Object { $_ -match 'Modules\[' }).Count -ge 1
+    (-not $r.Ok) -and $r.Errors.Count -ge 5 -and $modErr
 }
 
 # Demo spec parses and has the shape the generator reads.
