@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal SimaticML (Openness XML) FC in SCL. Import with:
+      Import-TiaBlockXml -Path .\templates\FC_minimal.simaticml.xml -Overwrite
+  The SW.Blocks.CompileUnit's NetworkSource carries the code. For LAD/FBD/STL the
+  NetworkSource contains FlgNet elements instead of StructuredText — export an
+  existing graphical block to see that shape. The DocumentInfo/EngineeringVersion
+  attribute must match your Openness version family (V19 here).
+-->
+<Document>
+  <Engineering version="V19" />
+  <SW.Blocks.FC ID="0">
+    <AttributeList>
+      <Name>AddTwo</Name>
+      <Number>0</Number>
+      <ProgrammingLanguage>SCL</ProgrammingLanguage>
+    </AttributeList>
+    <ObjectList>
+      <SW.Blocks.CompileUnit ID="1" CompositionName="CompileUnits">
+        <AttributeList>
+          <NetworkSource>
+            <StructuredText xmlns="http://www.siemens.com/automation/Openness/SW/NetworkSource/StructuredText/v3">
+              <StatementList>
+                <Token Text="#AddTwo := #a + #b;" />
+              </StatementList>
+            </StructuredText>
+          </NetworkSource>
+          <ProgrammingLanguage>SCL</ProgrammingLanguage>
+        </AttributeList>
+      </SW.Blocks.CompileUnit>
+    </ObjectList>
+  </SW.Blocks.FC>
+</Document>

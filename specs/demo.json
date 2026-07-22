@@ -1,0 +1,33 @@
+{
+  "portal":  { "new": true, "ui": false },
+  "project": { "name": "GeneratedDemo", "path": "GeneratedDemo", "openIfExists": true },
+  "plcs": [
+    {
+      "name": "PLC_1",
+      "orderNumber": "OrderNumber:6ES7 512-1SN03-0AB0/V3.0",
+      "tagTables": [
+        {
+          "name": "IO",
+          "tags": [
+            { "name": "Start_PB",  "dataType": "Bool", "address": "%I0.0", "comment": "start button" },
+            { "name": "Stop_PB",   "dataType": "Bool", "address": "%I0.1", "comment": "stop button (NC)" },
+            { "name": "Motor_Run", "dataType": "Bool", "address": "%Q0.0", "comment": "motor contactor" },
+            { "name": "Level_Raw", "dataType": "Int",  "address": "%IW64", "comment": "tank level analog in" }
+          ]
+        }
+      ],
+      "types": [
+        { "scl": "TYPE \"MotorData\"\nSTRUCT\n  Speed : Real;\n  Running : Bool;\n  Faults : Word;\nEND_STRUCT;\nEND_TYPE" }
+      ],
+      "blocks": [
+        { "sclFile": "..\\templates\\Scale.scl" },
+        { "scl": "FUNCTION_BLOCK \"MotorStarter\"\n{ S7_Optimized_Access := 'TRUE' }\nVAR_INPUT\n  Start : Bool;\n  Stop : Bool;\nEND_VAR\nVAR_OUTPUT\n  Running : Bool;\nEND_VAR\nBEGIN\n  IF #Start THEN #Running := TRUE; END_IF;\n  IF #Stop THEN #Running := FALSE; END_IF;\nEND_FUNCTION_BLOCK" }
+      ],
+      "dataBlocks": [
+        { "name": "Motor1_DB", "ofType": "MotorStarter" }
+      ],
+      "compile": true
+    }
+  ],
+  "save": true
+}

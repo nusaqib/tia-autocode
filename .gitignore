@@ -1,0 +1,15 @@
+# Scratch / generated
+*.scl.tmp
+scratch/
+*.log
+
+# TIA project working dirs created by demos
+ScratchDemo/
+**/System/
+**/IM/
+**/AdditionalFiles/
+**/*.ap19.lock
+
+# OS
+Thumbs.db
+desktop.ini
