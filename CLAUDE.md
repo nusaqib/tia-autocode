@@ -40,7 +40,7 @@ YAML manifest + CSV spreadsheets + SCL files.
 ## Build / test
 
 ```powershell
-Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 41 cmdlets
+Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 55 cmdlets
 .\tests\Test-Module.ps1                                   # offline self-test (no TIA)
 .\scripts\Validate-Full.ps1                               # live attach + scratch write path
 Test-TiaSpec -Path .\examples\example-project\project.yaml

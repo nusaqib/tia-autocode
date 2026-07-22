@@ -18,12 +18,18 @@ via the Framework `csc.exe` / MSBuild (net48).
 | Piece | State |
 |-------|-------|
 | Environment probe (versions, DLLs, group, live session) | ✅ validated |
-| Module: connect / project / device / tags / types / DBs / blocks / HMI / compile / export / download | ✅ built, loads, **37 cmdlets** exported |
-| Declarative generator (`Invoke-TiaBuildFromSpec`) | ✅ built |
+| Module: connect / project / device / tags / types / DBs / blocks / HMI / compile / export / download | ✅ built, loads, **55 cmdlets** exported |
+| Declarative generator (`Invoke-TiaBuildFromSpec`) - YAML manifest + CSV/XLSX + SCL | ✅ built, live-validated (compile 0 errors) |
+| Reverse adoption (`Export-TiaToSpec`) | ✅ built, live-validated |
+| Authoring helpers - XLSX import, naming lint, SCL/UDT templates | ✅ built, live-validated |
+| Project-repo scaffolder (`New-TiaProjectRepo`) + git-submodule template | ✅ built, self-tested |
 | Session enumeration (`GetProcesses`) | ✅ validated against live V19 session |
 | Group membership (`Siemens TIA Openness`) | ✅ user added + activated (log off/on) |
 | **Attach + read live project** | ✅ validated — attached to `PPS_SR_`, read devices/tags/blocks |
 | **Write path (project → CPU → tags → SCL FC/FB → compile)** | ✅ validated — compiled 0 errors / 0 warnings |
+
+The roadmap (Phases 0-5) is **complete**: spec-driven build, reverse adoption, HMI, XLSX/
+naming/templates, and the private project-repo model. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## One-time setup (required before anything can attach)
 
@@ -88,26 +94,45 @@ powershell -ExecutionPolicy Bypass -File .\tests\Test-Module.ps1
 
 ```
 src/TiaOpenness/         PowerShell module (the platform)
-  Private/               assembly resolver, session state, helpers
-  Public/                exported cmdlets: Connect, Project, Tags, Types,
-                         Blocks, Organization, Hmi, Lifecycle, Build
+  Private/               assembly resolver, session state, YAML/XLSX readers, synthesizers
+  Public/                exported cmdlets: Connect, Project, Hardware, Tags, Types,
+                         Blocks, Organization, Hmi, Lifecycle, Build, Spec, Reverse,
+                         Naming, Templates, ProjectRepo
+  templates/             reusable SCL/UDT templates (MotorStarter, AnalogScale, ...)
+  project-template/      skeleton for a new private project repo (see New-TiaProjectRepo)
 scripts/                 setup, demo, and validation scripts
 specs/                   declarative build specs (demo.json)
-templates/               sample SCL + SimaticML XML
-docs/                    openness-cheatsheet.md, framework.md, adding-a-device.md
-.claude/skills/          tia-openness + tia-hmi skills (expertise for future sessions)
+examples/example-project/ runnable end-to-end example (gitignored output)
+docs/                    ROADMAP, SPECIFICATION, GUIDE, PROJECT-REPO-GUIDE, cheatsheet, ...
+.claude/skills/          tia-openness, tia-hardware, tia-data, tia-programming, tia-hmi, tia-autocode
 ```
 
 ## Declarative generation
 
-Describe a program as JSON and build it in one call:
+Describe a program as a **YAML manifest** referencing **CSV/XLSX** data (tags, UDTs, DBs,
+rack modules, HMI tags) and **SCL** logic, then build it in one call:
 
 ```powershell
-Invoke-TiaBuildFromSpec -Path .\specs\demo.json
+Test-TiaSpec              -Path .\project.yaml     # offline validation (no TIA)
+Invoke-TiaBuildFromSpec   -Path .\project.yaml     # create + generate + compile
 ```
 
-It creates the portal/project, adds the CPU, and generates tag tables, UDTs, SCL
-blocks, data blocks, and HMI screens, then compiles. See `docs/framework.md`.
+It creates the portal/project, adds the CPU + rack, generates UDTs, SCL blocks (files
+**or** engine templates), data blocks, tags, and the HMI panel, then compiles. Names can
+be linted (`Test-TiaNaming`) and workbooks read dependency-free (`Import-TiaXlsx`).
+
+## Two-repo strategy: engine + private project repos
+
+This repo is the reusable **public engine**. Each machine lives in its own **private
+project repo** that consumes the engine as a pinned **git submodule** - so customer data
+stays private and every machine builds against a known engine version. Scaffold one:
+
+```powershell
+New-TiaProjectRepo -Path E:\TIA_Portal\MyMachine -Name MyMachine
+```
+
+See **[docs/PROJECT-REPO-GUIDE.md](docs/PROJECT-REPO-GUIDE.md)** for the full worked
+example (the `PPS_SR` repo: scaffold → submodule → validate in CI → build).
 
 ## This machine
 
@@ -118,9 +143,10 @@ policy**; writes go to a scratch project.
 
 ## Documentation
 
-- **[docs/ROADMAP.md](docs/ROADMAP.md)** — plan for full spec-driven project + HMI automation (Google Sheets → CSV → generate).
-- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 37-cmdlet reference.
-- **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate).
+- **[docs/ROADMAP.md](docs/ROADMAP.md)** — the plan and its status (Phases 0-5, all done): spec-driven project + HMI automation (spreadsheet → CSV/XLSX → generate).
+- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 55-cmdlet reference.
+- **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate → authoring helpers).
+- **[docs/PROJECT-REPO-GUIDE.md](docs/PROJECT-REPO-GUIDE.md)** — the two-repo strategy and how a private project repo (e.g. `PPS_SR`) links this engine as a submodule.
 - **[docs/framework.md](docs/framework.md)** — generator/architecture design.
 - **[docs/openness-cheatsheet.md](docs/openness-cheatsheet.md)** — raw Openness idioms.
 - **[docs/adding-a-device.md](docs/adding-a-device.md)** — CPU order numbers.
