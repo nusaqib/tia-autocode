@@ -1,0 +1,3 @@
+UDT,Member,DataType,Comment
+UDT_Motor,Speed,Real,ok
+GearData,Ratio,Real,violates UDT_ prefix

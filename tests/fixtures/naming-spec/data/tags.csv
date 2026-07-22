@@ -1,0 +1,3 @@
+TagTable,Name,DataType,Address,Comment,Retain
+Default tag table,GoodTag,Bool,%M0.0,ok,FALSE
+Default tag table,badtag,Bool,%M0.1,violates Pascal case,FALSE

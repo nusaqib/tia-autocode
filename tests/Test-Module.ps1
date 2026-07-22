@@ -104,6 +104,25 @@ Check "spec with tags from an .xlsx#Sheet ref validates clean" {
     $r.Ok -and $r.Errors.Count -eq 0
 }
 
+# Phase 4: naming-convention lint.
+Check "Test-TiaNaming flags Pascal-case + prefix violations (manifest rules)" {
+    $r = Test-TiaNaming -Path (Join-Path $root 'tests\fixtures\naming-spec\project.yaml')
+    $tagV = @($r.Violations | Where-Object { $_ -match "tag: 'badtag'" }).Count -ge 1
+    $udtV = @($r.Violations | Where-Object { $_ -match "udt: 'GearData'" }).Count -ge 1
+    (-not $r.Ok) -and $tagV -and $udtV
+}
+Check "Test-TiaNaming honors a -Rules hashtable (pattern) and passes clean names" {
+    $rules = @{ tags = @{ pattern = '^[A-Z][A-Za-z0-9_]*$' } }
+    $r = Test-TiaNaming -Path (Join-Path $root 'tests\fixtures\naming-spec\project.yaml') -Rules $rules
+    # 'badtag' fails the pattern; 'GoodTag' passes; udts not checked (no rule).
+    @($r.Violations | Where-Object { $_ -match "tag: 'badtag'" }).Count -ge 1 -and
+    @($r.Violations | Where-Object { $_ -match 'udt:' }).Count -eq 0
+}
+Check "Test-TiaSpec folds naming violations into Warnings (still Ok)" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\naming-spec\project.yaml')
+    $r.Ok -and @($r.Warnings | Where-Object { $_ -match '^naming:' }).Count -ge 2
+}
+
 # Phase 3: HMI spec validation (offline).
 Check "HMI spec fixture validates clean" {
     $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\hmi-spec\project.yaml')

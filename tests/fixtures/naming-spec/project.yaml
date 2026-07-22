@@ -1,0 +1,16 @@
+# Naming-lint fixture. Spec is structurally valid (Test-TiaSpec Ok=$true) but two names
+# violate the naming rules, so they surface as Warnings: 'badtag' (not Pascal-case) and
+# 'GearData' (missing UDT_ prefix).
+project:
+  name: NamingDemo
+plcs:
+  - name: PLC_1
+    tags:
+      - data/tags.csv
+    udts:
+      - data/udts.csv
+naming:
+  tags:
+    case: Pascal
+  udts:
+    prefix: UDT_

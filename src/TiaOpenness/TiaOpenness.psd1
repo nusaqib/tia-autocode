@@ -22,7 +22,7 @@
         'Export-TiaHmiTagTable','Import-TiaHmiTagTable','Export-TiaHmiAlarms','Import-TiaHmiAlarms',
         'Invoke-TiaBuildFromSpec','Export-TiaToSpec','Import-TiaXlsx',
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',
-        'Test-TiaSpec'
+        'Test-TiaSpec','Test-TiaNaming'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

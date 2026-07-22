@@ -193,6 +193,14 @@ function Test-TiaSpec {
         }
     }
 
+    # --- Naming lint (Phase 4) --- advisory: fold violations into Warnings.
+    if ($spec.naming) {
+        try {
+            $lint = Test-TiaNaming -Path $Path
+            foreach ($v in @($lint.Violations)) { Warn "naming: $v" }
+        } catch { Warn "naming lint skipped: $($_.Exception.Message)" }
+    }
+
     [pscustomobject]@{
         Ok       = ($errors.Count -eq 0)
         Errors   = @($errors)
