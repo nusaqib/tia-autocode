@@ -1,0 +1,20 @@
+// @template AnalogScale
+// @kind FC
+// @description Linear scale a raw analog value (RawLo..RawHi) to engineering units (EuLo..EuHi).
+// @param Name FC name, e.g. FC_ScaleFlow
+FUNCTION "{{Name}}" : Real
+{ S7_Optimized_Access := 'TRUE' }
+VAR_INPUT
+    Raw : Int;
+    RawLo : Int;
+    RawHi : Int;
+    EuLo : Real;
+    EuHi : Real;
+END_VAR
+BEGIN
+    IF (#RawHi - #RawLo) = 0 THEN
+        #{{Name}} := #EuLo;
+    ELSE
+        #{{Name}} := #EuLo + (INT_TO_REAL(#Raw - #RawLo) * (#EuHi - #EuLo)) / INT_TO_REAL(#RawHi - #RawLo);
+    END_IF;
+END_FUNCTION

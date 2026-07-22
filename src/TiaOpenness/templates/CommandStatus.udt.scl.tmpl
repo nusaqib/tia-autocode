@@ -1,0 +1,16 @@
+// @template CommandStatus
+// @kind UDT
+// @description Reusable command/status pair for a device (HMI <-> PLC handshake).
+// @param Name UDT type name, e.g. CmdStatus
+TYPE "{{Name}}"
+VERSION : 0.1
+STRUCT
+    CmdStart : Bool;
+    CmdStop : Bool;
+    CmdReset : Bool;
+    StsRunning : Bool;
+    StsFault : Bool;
+    StsReady : Bool;
+    FaultCode : Int;
+END_STRUCT;
+END_TYPE

@@ -1,0 +1,29 @@
+// @template MotorStarter
+// @kind FB
+// @description Basic motor starter: Start/Stop with interlock -> Running, speed passthrough.
+// @param Name FB name, e.g. FB_Conveyor
+// @param SpeedType=Real data type of the speed setpoint/output
+FUNCTION_BLOCK "{{Name}}"
+{ S7_Optimized_Access := 'TRUE' }
+VAR_INPUT
+    Start : Bool;
+    Stop : Bool;
+    Interlock : Bool;
+    SpeedSetpoint : {{SpeedType}};
+END_VAR
+VAR_OUTPUT
+    Running : Bool;
+    Speed : {{SpeedType}};
+END_VAR
+BEGIN
+    IF #Stop OR NOT #Interlock THEN
+        #Running := FALSE;
+    ELSIF #Start THEN
+        #Running := TRUE;
+    END_IF;
+    IF #Running THEN
+        #Speed := #SpeedSetpoint;
+    ELSE
+        #Speed := 0;
+    END_IF;
+END_FUNCTION_BLOCK

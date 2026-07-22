@@ -66,7 +66,32 @@ function Test-TiaSpec {
             if ($null -eq $rows) { continue }
             foreach ($r in $rows) { if ($r.UDT) { [void]$udtNames.Add($r.UDT.Trim().ToLowerInvariant()) } }
         }
+
+        # --- Logic (SCL files + template entries) -> collect FB and UDT names ---
+        # Templates are expanded in-memory here so InstanceOfFB / TypedOfUDT refs resolve,
+        # and expansion doubles as validation (bad template name / missing param -> Err).
+        $fbNames = New-Object System.Collections.Generic.List[string]
+        foreach ($l in @($plc.logic)) {
+            if (-not $l) { continue }
+            $txt = $null
+            if ($l -is [string]) {
+                $lp = Resolve-Rel $l
+                if (-not (Test-Path $lp)) { Err "logic[$pn] file not found: $lp"; continue }
+                $txt = Get-Content $lp -Raw
+            } elseif ($l.template) {
+                try { $txt = Expand-TiaTemplate -Name $l.template -Parameters $l.params -TemplateDir $l.templateDir }
+                catch { Err "logic[$pn] template '$($l.template)': $($_.Exception.Message)"; continue }
+            } else { Err "logic[$pn]: object entry has no 'template' or path"; continue }
+            foreach ($mm in [regex]::Matches($txt, '(?im)^\s*FUNCTION_BLOCK\s+"?([A-Za-z_]\w*)"?')) {
+                [void]$fbNames.Add($mm.Groups[1].Value.ToLowerInvariant())
+            }
+            foreach ($mm in [regex]::Matches($txt, '(?im)^\s*TYPE\s+"?([A-Za-z_]\w*)"?')) {
+                [void]$udtNames.Add($mm.Groups[1].Value.ToLowerInvariant())
+            }
+        }
         $udtSet = @($udtNames | Select-Object -Unique)
+        $fbSet  = @($fbNames  | Select-Object -Unique)
+
         foreach ($u in @($plc.udts)) {
             if (-not $u) { continue }
             $rows = @(try { Read-TiaRows -Ref $u -BaseDir $base } catch { @() })
@@ -75,19 +100,6 @@ function Test-TiaSpec {
                 Test-TypeRef $r.DataType $udtSet "UDT[$pn] $($r.UDT).$($r.Member)"
             }
         }
-
-        # --- FBs defined in logic (for InstanceOfFB refs) ---
-        $fbNames = New-Object System.Collections.Generic.List[string]
-        foreach ($l in @($plc.logic)) {
-            if (-not $l) { continue }
-            $lp = Resolve-Rel $l
-            if (-not (Test-Path $lp)) { Err "logic[$pn] file not found: $lp"; continue }
-            $txt = Get-Content $lp -Raw
-            foreach ($mm in [regex]::Matches($txt, '(?im)^\s*FUNCTION_BLOCK\s+"?([A-Za-z_]\w*)"?')) {
-                [void]$fbNames.Add($mm.Groups[1].Value.ToLowerInvariant())
-            }
-        }
-        $fbSet = @($fbNames | Select-Object -Unique)
 
         # --- Modules (rack layout) ---
         foreach ($mod in @($plc.modules)) {

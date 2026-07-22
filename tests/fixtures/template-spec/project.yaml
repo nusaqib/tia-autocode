@@ -1,0 +1,14 @@
+# Template fixture: FB comes from the MotorStarter template (not a .scl file), and an
+# instance DB is created "of" that generated FB - so Test-TiaSpec must expand the
+# template to discover the FB name and resolve the InstanceOfFB reference.
+project:
+  name: TemplateDemo
+plcs:
+  - name: PLC_1
+    logic:
+      - template: MotorStarter
+        params:
+          Name: FB_Conveyor
+          SpeedType: Real
+    dbs:
+      blocks: data/dbs.blocks.csv

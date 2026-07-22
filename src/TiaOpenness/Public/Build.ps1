@@ -112,6 +112,10 @@ function Invoke-TiaBuildFromSpec {
             foreach ($lref in @($plc.logic) + @($plc.blocks)) {
                 if (-not $lref) { continue }
                 if ($lref -is [string]) { Import-TiaScl -Plc $sw -Path (Rel $lref) | Out-Null; Step "logic $lref" }
+                elseif ($lref.template) {
+                    $scl = Expand-TiaTemplate -Name $lref.template -Parameters $lref.params -TemplateDir $lref.templateDir
+                    Import-TiaScl -Plc $sw -Scl $scl | Out-Null; Step "logic from template $($lref.template)"
+                }
                 elseif ($lref.sclFile) { Import-TiaScl -Plc $sw -Path (Rel $lref.sclFile) | Out-Null; Step "logic file" }
                 elseif ($lref.scl) { Import-TiaScl -Plc $sw -Scl $lref.scl | Out-Null; Step "logic (inline)" }
             }

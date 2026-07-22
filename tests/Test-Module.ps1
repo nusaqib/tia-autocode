@@ -123,6 +123,26 @@ Check "Test-TiaSpec folds naming violations into Warnings (still Ok)" {
     $r.Ok -and @($r.Warnings | Where-Object { $_ -match '^naming:' }).Count -ge 2
 }
 
+# Phase 4: template library.
+Check "template library lists the built-in templates (FB/FC/UDT)" {
+    $names = @(Get-TiaTemplate).Name
+    ($names -contains 'MotorStarter') -and ($names -contains 'AnalogScale') -and ($names -contains 'CommandStatus')
+}
+Check "Expand-TiaTemplate substitutes tokens and applies defaults" {
+    $scl = Expand-TiaTemplate -Name MotorStarter -Parameters @{ Name='FB_Conveyor' }
+    $scl -match 'FUNCTION_BLOCK "FB_Conveyor"' -and $scl -match 'SpeedSetpoint : Real' -and ($scl -notmatch '\{\{')
+}
+Check "Expand-TiaTemplate throws on a missing required parameter" {
+    $threw = $false
+    try { Expand-TiaTemplate -Name AnalogScale -Parameters @{} | Out-Null } catch { $threw = $true }
+    $threw
+}
+Check "Test-TiaSpec resolves an instance DB of a template-generated FB" {
+    $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\template-spec\project.yaml')
+    if (-not $r.Ok) { Write-Host "    errors: $($r.Errors -join '; ')" -ForegroundColor Red }
+    $r.Ok -and $r.Errors.Count -eq 0
+}
+
 # Phase 3: HMI spec validation (offline).
 Check "HMI spec fixture validates clean" {
     $r = Test-TiaSpec -Path (Join-Path $root 'tests\fixtures\hmi-spec\project.yaml')
