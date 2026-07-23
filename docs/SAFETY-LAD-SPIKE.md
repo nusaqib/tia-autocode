@@ -112,6 +112,26 @@ allowed. Proven: SR PPS `FB_BTA_Safety` = 23 series-contact (software-1oo2) netw
 a zone interlock -> whole-CPU compile **0 errors / 0 warnings**
 (`PPS_SR/source/gen_bta_flad.py`).
 
+## Safety runtime integration - the Openness boundary (BTA finding)
+
+Generating and compiling an F-FB works (above). **Wiring it into the safety runtime does
+not fully automate via Openness:**
+- The F-FB's instance DB must be a *valid safety* instance DB. One created from SCL
+  (`New-TiaDataBlock -OfType`) compiles to: *"...is not a valid safety instance data block.
+  Recreate..."* - the safety instance DB is managed by **Safety Administration**, not raw
+  SCL/Openness.
+- Editing the auto-generated `Main_Safety_RTG1` (F_FBD, not protected, exports fine with
+  `ExportOptions.WithDefaults`) to add a `Call` to the F-FB is rejected at import: a
+  powerrail->`en` wire on the call is *"an invalid connection ... at pin 'en'"*, and an
+  empty `<Wires/>` fails the FlgNet schema (a `Wire` is required). The FBD F-call
+  connection form that Safety Administration accepts was not found via Openness in V19.
+
+**Consequence / accepted approach:** the engine *generates* the safety logic block
+(`FB_BTA_Safety`, compiles 0/0) and everything around it; the final **call into
+`Main_Safety_RTG1` + the valid F-instance-DB is done once in the TIA safety editor** - which
+is where the **mandatory safety review** of a generated F-program happens anyway. This is a
+per-project hand-off, not a per-device one, and identical for every zone.
+
 ## Still to fold into the engine (known-doable)
 
 - Fold the proven LAD/F-LAD emission + ET200SP plug + IO-system assignment into
