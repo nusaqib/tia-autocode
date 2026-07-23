@@ -148,6 +148,7 @@ policy**; writes go to a scratch project.
 - **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate → authoring helpers).
 - **[docs/AUTHORING.md](docs/AUTHORING.md)** — what to specify for a project and in which file (every manifest field + CSV column), plus how to create a new project from the template.
 - **[docs/PROJECT-REPO-GUIDE.md](docs/PROJECT-REPO-GUIDE.md)** — the two-repo strategy and how a private project repo (e.g. `PPS_SR`) links this engine as a submodule.
+- **[docs/SAFETY-LAD-SPIKE.md](docs/SAFETY-LAD-SPIKE.md)** — Phase 6 feasibility: proven LAD/F-LAD (FlgNet) generation, safety-block authoring, and ET200SP distributed-I/O creation via Openness.
 - **[docs/framework.md](docs/framework.md)** — generator/architecture design.
 - **[docs/openness-cheatsheet.md](docs/openness-cheatsheet.md)** — raw Openness idioms.
 - **[docs/adding-a-device.md](docs/adding-a-device.md)** — CPU order numbers.
