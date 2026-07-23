@@ -29,7 +29,11 @@ via the Framework `csc.exe` / MSBuild (net48).
 | **Write path (project → CPU → tags → SCL FC/FB → compile)** | ✅ validated — compiled 0 errors / 0 warnings |
 
 The roadmap (Phases 0-5) is **complete**: spec-driven build, reverse adoption, HMI, XLSX/
-naming/templates, and the private project-repo model. See [docs/ROADMAP.md](docs/ROADMAP.md).
+naming/templates, and the private project-repo model. **Phase 6** (safety/LAD + distributed
+ET200SP) is **proven at scale**: the private SR PPS project builds a whole fail-safe system
+- 1 F-CPU + **16 ET200SP PROFINET stations (76 modules) + 16 F-LAD safety FBs** in one
+project, **compiling 0/0** - via Openness. See [docs/ROADMAP.md](docs/ROADMAP.md) and
+[docs/SAFETY-LAD-SPIKE.md](docs/SAFETY-LAD-SPIKE.md).
 
 ## One-time setup (required before anything can attach)
 
