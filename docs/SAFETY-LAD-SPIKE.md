@@ -100,6 +100,18 @@ as raw safe Bools, and evaluate equivalence + a discrepancy timer in the F-progr
 automatable and certifiable. (Firmware 1oo2, if required, is a manual step in the TIA HW
 editor after generation.)
 
+## F-block interface types (gotcha)
+
+Fail-safe block interfaces permit only **elementary** datatypes - a custom UDT is rejected
+with *"The type &lt;UDT&gt; is not permitted in the fail-safe block interface."* (and every
+`.member` access off it then reports *"Tag not defined"*). Use `Bool`/`Int`/`Word`/`Time`
+statics inside the F-FB; keep UDT-structured status in a **standard** (non-F) DB that a
+normal FC copies the safe values into for the HMI. Reading standard PLC tags at F-periphery
+addresses (F-DI channels) as `Scope="GlobalVariable"` operands inside an F-LAD rung *is*
+allowed. Proven: SR PPS `FB_BTA_Safety` = 23 series-contact (software-1oo2) networks +
+a zone interlock -> whole-CPU compile **0 errors / 0 warnings**
+(`PPS_SR/source/gen_bta_flad.py`).
+
 ## Still to fold into the engine (known-doable)
 
 - Fold the proven LAD/F-LAD emission + ET200SP plug + IO-system assignment into
