@@ -18,7 +18,10 @@ Examples (confirm against your catalog / TIA version):
 
 | CPU | TypeIdentifier |
 |-----|----------------|
+| CPU 1512SP F-1 PN (ET200SP fail-safe; validated on this machine) | `OrderNumber:6ES7 512-1SK01-0AB0/V2.9` |
 | S7-1515F-2 PN (validated on this machine) | `OrderNumber:6ES7 515-2FM02-0AB0/V2.9` |
+| S7-1513F-1 PN (validated on this machine) | `OrderNumber:6ES7 513-1FL02-0AB0/V2.9` |
+| S7-1511F-1 PN (validated on this machine) | `OrderNumber:6ES7 511-1FK02-0AB0/V2.9` |
 | S7-1511-1 PN | `OrderNumber:6ES7 511-1AK02-0AB0/V2.9` |
 | S7-1516-3 PN/DP | `OrderNumber:6ES7 516-3AN02-0AB0/V2.9` |
 | S7-1214C DC/DC/DC | `OrderNumber:6ES7 214-1AG40-0XB0/V4.4` |
