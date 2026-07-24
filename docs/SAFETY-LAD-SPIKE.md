@@ -152,12 +152,41 @@ discrepancy time), `FDBACK` (actuator readback), `ACK_GL` (F-I/O passivation/rei
 that are the mandated way to build these functions. Full analysis:
 `PPS_SR/docs/SAFETY-REVIEW.md` (findings F1-F10 + standardization baseline).
 
-**Openness boundary for the engine:** each F-application block is an **instance FB needing a
-valid F-instance DB** - which is exactly the artifact Openness cannot create (above). So the
-engine can emit the block **networks** (operands pre-wired to DB members) into an F-FB, but
-the F-instance DB + the RTG call remain the one-time safety-editor step. Plan any future
-`New-TiaSafetyFunction`-style cmdlet around that boundary: generate the certified-block call
-network, not the instance DB.
+### Live spike: can Openness author these calls? (PROVEN, 2026-07-24, scratch F-CPU)
+
+Ran a focused spike (`scratchpad/spike_ev1oo2di.ps1`) against a scratch **CPU 1512SP F-1 PN**.
+Findings, each import/compile confirmed live:
+
+1. **A block CALL inside an F-LAD F-FB imports AND compiles 0 errors via Openness.** A user
+   F-FB called as **multi-instance** from another F-LAD F-FB works:
+   `<Call><CallInfo Name="FB_x" BlockType="FB"><Instance Scope="LocalVariable"><Component/></Instance>`
+   plus a **`<Parameter Name=.. Section=Input|Output Type=..>`** per pin (the pins do not exist
+   until declared - "no connection with the name 'In1'" otherwise), `en` driven from the
+   **Powerrail**. This **overturns** the earlier assumption that F-block calls cannot be
+   authored via Openness - the earlier failure was specific to editing the **`Main_Safety_RTG1`
+   F_FBD runtime OB**, not to F-LAD FB-to-FB calls. So the engine **can** generate modular
+   F-FBs that call each other and each certified block.
+2. **`EV1oo2DI` is a real, resolvable safety instruction via Openness** - but as a versioned
+   **`<Part Name="EV1oo2DI" Version="1.x">`** (instruction template), **not** an FB `<Call>`
+   (`BlockType="FB"` is rejected - "wrong version / no longer exists"; and `<CallInfo Version>`
+   is not a schema attribute). Available versions are **1.1 / 1.2 / 1.3** on this install
+   (1.0, 1.4+, 2.x -> "cannot find an instruction with name 'EV1oo2DI' and version ...").
+3. **The instruction Part carries a deep internal template signature** that TIA normally
+   generates automatically: multiple required **cardinality** `TemplateValue`s
+   (`f_user_card`, `f_image_card`, `f_imageclassic_card`, `f_imageplus_card`, ...) **and**
+   **type** `TemplateValue`s (`codedbool_type`, ...) - the F-system coded-safety-datatype
+   machinery. `<Instance>` is **not** a legal child of `<Part>` (valid children:
+   TemplateValue/AutomaticTyped/Invisible/Negated/Comment).
+
+**Consequence for the engine:** hand-authoring a certified F-instruction's template by trial is
+**impractical and unsafe** - its cardinality/coded-type values size F-memory and encode safety
+data, and must not be guessed. The correct path is **canonical-export templating**: a human
+places each certified block (`ESTOP1`, `SFDOOR`, `EV1oo2DI`, `FDBACK`, `ACK_GL`) **once** in the
+TIA editor, exports the F-FB to SimaticML, and those exports become generator **templates** in
+which only operands/instances/parameters vary. Placing-the-instruction-once is a GUI action
+Openness cannot perform; everything after it (templating, per-device emission, compile) is
+automatable. The top-level assignment of the zone F-FB into the safety runtime + its valid
+F-instance DB remains the separate one-time safety-editor step (above).
 
 ## Still to fold into the engine (known-doable)
 
