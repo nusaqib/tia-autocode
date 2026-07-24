@@ -100,17 +100,28 @@ as raw safe Bools, and evaluate equivalence + a discrepancy timer in the F-progr
 automatable and certifiable. (Firmware 1oo2, if required, is a manual step in the TIA HW
 editor after generation.)
 
-## F-block interface types (gotcha)
+## F-block interface types vs. UDT members in a DB (IMPORTANT - two different things)
 
-Fail-safe block interfaces permit only **elementary** datatypes - a custom UDT is rejected
-with *"The type &lt;UDT&gt; is not permitted in the fail-safe block interface."* (and every
-`.member` access off it then reports *"Tag not defined"*). Use `Bool`/`Int`/`Word`/`Time`
-statics inside the F-FB; keep UDT-structured status in a **standard** (non-F) DB that a
-normal FC copies the safe values into for the HMI. Reading standard PLC tags at F-periphery
-addresses (F-DI channels) as `Scope="GlobalVariable"` operands inside an F-LAD rung *is*
-allowed. Proven: SR PPS `FB_BTA_Safety` = 23 series-contact (software-1oo2) networks +
-a zone interlock -> whole-CPU compile **0 errors / 0 warnings**
-(`PPS_SR/source/gen_bta_flad.py`).
+Distinguish **where** the UDT sits - one placement is rejected, the other is the proven
+current architecture:
+
+- **UDT on the F-FB's own interface section** (Input/Output/InOut/Static) is **rejected**:
+  *"The type &lt;UDT&gt; is not permitted in the fail-safe block interface."* (and every
+  `.member` access then reports *"Tag not defined"*). So do **not** put UDTs - or FB statics
+  of any kind - on the F-FB itself.
+- **UDT members in a DB, accessed from F-LAD as `Scope="GlobalVariable"` operands**, **works**
+  (proven live, user-confirmed with `"DB_BTA".BL119902.Device_Safe` in an F-LAD contact). The
+  whole SR PPS safety layer is built this way: `FB_<zone>_IOMap` and `FB_<zone>_Safety`
+  operate **directly on DB members** (`"DB_zone".<inst>.<comp>.ChA/.Safe/.Device_Safe`) with a
+  multi-`<Component>` symbol - **no FB statics at all**. This supersedes the earlier
+  statics-in-FB + "copy into a standard DB for the HMI" approach; keep state in the DB, not on
+  the block. Proven: the whole project (11 UDTs + 16 DBs + 32 F-FBs + 181 tags) compiles
+  **0 errors / 0 warnings** (`PPS_SR/source/gen_zone_flad.py`, `gen_zone_iomap.py`).
+
+**F-DB caveat:** V19 Openness cannot create a *formal* `F_DB` with UDT members (the `F_DB`
+GlobalDB import fails; `ProgrammingLanguage` is read-only), so the DB is generated as a
+**standard** global DB (identical UDT structure, compiles 0/0) and **marked a formal F-DB
+once in the safety editor** - the same one-time hand-off as the runtime-call wiring below.
 
 ## Safety runtime integration - the Openness boundary (BTA finding)
 
@@ -131,6 +142,22 @@ not fully automate via Openness:**
 `Main_Safety_RTG1` + the valid F-instance-DB is done once in the TIA safety editor** - which
 is where the **mandatory safety review** of a generated F-program happens anyway. This is a
 per-project hand-off, not a per-device one, and identical for every zone.
+
+## Certified F-application blocks are the standard (safety-review finding, 2026-07-24)
+
+Hand-rolled `ChA AND ChB` rungs are **not** the right long-term implementation. The Siemens
+Safety programming standard (entry 54110126) ships **TUV-certified F-application blocks** -
+`ESTOP1` (crash-off: latch + supervised reset), `SFDOOR` (access door), `EV1oo2DI` (1oo2 +
+discrepancy time), `FDBACK` (actuator readback), `ACK_GL` (F-I/O passivation/reintegration) -
+that are the mandated way to build these functions. Full analysis:
+`PPS_SR/docs/SAFETY-REVIEW.md` (findings F1-F10 + standardization baseline).
+
+**Openness boundary for the engine:** each F-application block is an **instance FB needing a
+valid F-instance DB** - which is exactly the artifact Openness cannot create (above). So the
+engine can emit the block **networks** (operands pre-wired to DB members) into an F-FB, but
+the F-instance DB + the RTG call remain the one-time safety-editor step. Plan any future
+`New-TiaSafetyFunction`-style cmdlet around that boundary: generate the certified-block call
+network, not the instance DB.
 
 ## Still to fold into the engine (known-doable)
 
