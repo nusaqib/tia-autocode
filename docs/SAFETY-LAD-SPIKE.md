@@ -178,14 +178,39 @@ Findings, each import/compile confirmed live:
    machinery. `<Instance>` is **not** a legal child of `<Part>` (valid children:
    TemplateValue/AutomaticTyped/Invisible/Negated/Comment).
 
-**Consequence for the engine:** hand-authoring a certified F-instruction's template by trial is
-**impractical and unsafe** - its cardinality/coded-type values size F-memory and encode safety
-data, and must not be guessed. The correct path is **canonical-export templating**: a human
-places each certified block (`ESTOP1`, `SFDOOR`, `EV1oo2DI`, `FDBACK`, `ACK_GL`) **once** in the
-TIA editor, exports the F-FB to SimaticML, and those exports become generator **templates** in
-which only operands/instances/parameters vary. Placing-the-instruction-once is a GUI action
-Openness cannot perform; everything after it (templating, per-device emission, compile) is
-automatable. The top-level assignment of the zone F-FB into the safety runtime + its valid
+### Rounds 2-3 (same day): SFDOOR and ESTOP1 DO place via Openness
+
+Adaptive error-driven discovery (loop on the import schema errors, one TIA session) got two
+of the three instructions importing:
+
+- **`SFDOOR` V1.1 imports** (repeatably): plain `<Part Name="SFDOOR" Version="1.1" />`, no
+  TemplateValues needed; unwired pins satisfied with
+  `<Wire><OpenCon UId=".."/><NameCon UId="30" Name="PIN"/></Wire>`; Bool pins acceptable as
+  `LiteralConstant` (`<Constant><ConstantType>Bool</ConstantType><ConstantValue>TRUE`).
+  Pin set: `IN1 IN2 QBAD_IN1 QBAD_IN2 OPEN_NEC ACK_NEC ACK Q ACK_REQ DIAG`.
+- **`ESTOP1` V1.2 imports** the same way (V1.0/1.1 not in catalog). Pin set:
+  `E_STOP ACK ACK_NEC TIME_DEL Q Q_DELAY ACK_REQ DIAG`.
+- **Time literals are rejected on import** - `T#0s`/`T#500ms` as a `LiteralConstant` of
+  `ConstantType Time` fails ("value cannot be set for the parameter of the type 'Time'").
+  Leave time pins `OpenCon`; set them in TIA (export will reveal the accepted encoding).
+- **`EV1oo2DI` remains blocked** on the `codedbool_type` type-token (every guessed value
+  rejected: Bool/BOOL/F_BOOL/SafeBool/CodedBool/...). V1.3 additionally takes 4 cardinality
+  TemplateValues (`f_user_card`=1, image cards; "exactly 1 extendable I/Os" when all =1).
+- **Instance binding is the remaining gap for placed instructions**: `<Instance>` is not a
+  legal child of an instruction `<Part>` (only TemplateValue/AutomaticTyped/Invisible/
+  Negated/Comment), so imported ESTOP1/SFDOOR networks compile with one error each
+  ("operand required at the input or output is missing") until the instance is assigned in
+  the safety editor. Declared static members (`iEstop_x : ESTOP1 Version="1.2"`) import fine.
+- Export requires a **consistent** (compiled-clean) block - fix-then-export, not
+  export-the-broken-seed.
+
+**Consequence for the engine (revised):** the generator **places** ESTOP1/SFDOOR networks
+with operands pre-wired (proven at scale in `PPS_SR_LAB`: 5x ESTOP1 + 2x SFDOOR imported in
+one F-FB); the human binds instances + sets time/parameter pins in the safety editor and
+exports; the exports become the canonical templates that close the remaining gaps
+(instance-binding XML, Time encoding, `codedbool_type` for EV1oo2DI). Lab repo:
+`github.com/nusaqib/PPS_SR_LAB` (private) with `docs/REVERSE-ENGINEERING.md` as the
+worklist. The top-level assignment of the zone F-FB into the safety runtime + its valid
 F-instance DB remains the separate one-time safety-editor step (above).
 
 ## Still to fold into the engine (known-doable)
