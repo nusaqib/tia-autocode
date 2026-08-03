@@ -213,6 +213,35 @@ exports; the exports become the canonical templates that close the remaining gap
 worklist. The top-level assignment of the zone F-FB into the safety runtime + its valid
 F-instance DB remains the separate one-time safety-editor step (above).
 
+## Canonical exports from the reviewed LAB project (2026-08-03) - architecture decoded
+
+The human safety-editor pass on `PPS_SR_LAB` was exported (`logic/exported/`) and decoded
+(full design: `PPS_SR_LAB/docs/DESIGN.md`). Platform-level facts:
+
+- **Multi-instance under the safety main replaces separate F-instance DBs.**
+  `Main_Safety_RTG1` (F_LAD) declares the zone FBs as statics typed by the FBs
+  (`Member Name="FB_x_Instance" Datatype="&quot;FB_x&quot;"`) and calls them in one network
+  - a single `<Wire>` fans `Powerrail` to the `en` of every `<Call>`; no `<Parameter>`
+  children on parameterless calls. This is the same Call schema we already import via
+  Openness, so the safety-runtime wiring is likely generatable after all (needs one
+  import test against `Main_Safety_RTG1`).
+- **A formal F-DB with UDT members exists**: `DB_BTA` exports with
+  `ProgrammingLanguage=F_DB` and nested-UDT members. Marking is still a safety-editor
+  act, but the marked DB round-trips through export.
+- **GUI-placed instruction versions on this install**: `ESTOP1 V1.6`, `SFDOOR V1.3`,
+  `EV1oo2DI V1.3` (import probing had found older 1.1/1.2 accepted - template from the
+  GUI versions). The instance members carry the full pin interface inline
+  (`Datatype="ESTOP1" Version="1.6"` + Input/Output `<Sections>`).
+- **License + consistency gates on export**: block XML export requires a STEP 7
+  Professional license seat (UDT export does not) and refuses inconsistent
+  (compile-error) blocks; `FOB_RTG1` is never exportable.
+- LAD `Rs` flip-flop part (`<Part Name="Rs">`, pins `r`/`s1`/`q`, operand = a static Bool)
+  is the reviewed latch idiom; digit-leading UDT member names (`1oo2_OK`) are legal;
+  UDTs export with `IsFailsafeCompliant=true`.
+
+Project-facing template: engine `docs/DESIGN-TEMPLATE.md` (design-document standard every
+project repo instantiates as `docs/DESIGN.md`).
+
 ## Still to fold into the engine (known-doable)
 
 - Fold the proven LAD/F-LAD emission + ET200SP plug + IO-system assignment into
