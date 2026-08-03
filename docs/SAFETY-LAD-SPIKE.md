@@ -4,6 +4,17 @@ Live results (TIA V19 + Openness, scratch F-CPU) establishing what Openness allo
 distributed **fail-safe** system programmed in **LAD** - the basis for generating the
 SR PPS project (and a future engine capability). Every item below was run end-to-end.
 
+> **This is a chronological spike log - later sections supersede earlier ones.**
+> **CURRENT TRUTH (after the 2026-08-03 pass-2 round-trip, last two sections):** the
+> ENTIRE F-program regenerates from canonical SimaticML via Openness - UDTs, **formal
+> F-DBs**, F-LAD FBs incl. **certified instructions** (`ESTOP1 V1.6` / `SFDOOR V1.3` /
+> `EV1oo2DI V1.3` with `<Instance>` as FIRST Part child + `codedbool_type=DInt`), and
+> **`Main_Safety_RTG1` itself** (multi-instance zone-FB calls). No manual safety-editor
+> step remains for program *structure*. Earlier "cannot" claims about F-DBs, instance
+> binding, and RTG wiring are corrected in place below; still true: no firmware-1oo2
+> parameter, no Time literals in FlgNet, no `FOB_RTG1` export, license + consistency
+> gates on block export. Canonical templates: `PPS_SR_LAB/logic/exported/`.
+
 ## Summary - what works
 
 | Capability | Result |

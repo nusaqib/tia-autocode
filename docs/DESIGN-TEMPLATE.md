@@ -166,13 +166,16 @@ Keep the project-relevant subset, each with a link to engine `docs/SAFETY-LAD-SP
 `docs/openness-cheatsheet.md`:
 
 - Windows PowerShell 5.1 only; Openness group membership + logoff/on.
-- Openness cannot: create valid F-instance DBs, wire calls into `Main_Safety_RTG1`,
-  set F-DI 1oo2 firmware evaluation (V19), attach `<Instance>` to an instruction `<Part>`,
-  import Time literals in FlgNet, mark a DB as formal F-DB.
-- Openness can (proven): author/import F-LAD incl. FB-to-FB multi-instance calls, place
-  `SFDOOR`/`ESTOP1` as versioned `<Part>`s, plug ET200SP incl. CPU-local modules, assign
-  PROFINET IO systems, export UDTs/blocks (block export needs a STEP 7 Professional
-  license seat and a *consistent* block).
+- Openness cannot (V19): set F-DI 1oo2 firmware sensor evaluation, import `T#..` Time
+  literals as FlgNet LiteralConstants, export `FOB_RTG1`, export inconsistent blocks,
+  export blocks without a STEP 7 Professional license seat (UDT export needs none),
+  create *standalone* F-instance DBs (moot with multi-instance architecture).
+- Openness can (proven, canonical recipes in `PPS_SR_LAB/logic/exported/`): regenerate a
+  FULL F-program from SimaticML - UDTs, **formal F-DBs**, F-LAD incl. FB-to-FB
+  multi-instance calls and **`Main_Safety_RTG1` overwrite**, certified instructions
+  (`ESTOP1`/`SFDOOR`/`EV1oo2DI`) as versioned `<Part>`s with `<Instance>` as the FIRST
+  child + their TemplateValue signature; plug ET200SP incl. CPU-local modules; assign
+  PROFINET IO systems (subnet-first).
 - `<project-specific gotchas: BA00/BA01 byte widths, module quirks, ...>`
 
 ## 13. Decision log / open questions
