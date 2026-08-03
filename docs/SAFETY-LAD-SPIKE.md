@@ -242,6 +242,31 @@ The human safety-editor pass on `PPS_SR_LAB` was exported (`logic/exported/`) an
 Project-facing template: engine `docs/DESIGN-TEMPLATE.md` (design-document standard every
 project repo instantiates as `docs/DESIGN.md`).
 
+## Pass-2 round-trip (2026-08-03): FULL program regenerates from canonical XML
+
+After the owner fixed the two inconsistent blocks, `FB_BTA_Certified`/`FB_BTA_IOMap`
+exported, answering every remaining unknown - then the ENTIRE program (3 UDTs, formal
+F-DB `DB_BTA`, `FB_BTA_{IOMap,Safety,Certified}`, and an **overwrite of
+`Main_Safety_RTG1`**) was imported into a **fresh** scratch F-CPU and compiled with zero
+structural errors (only expected tag-undefined; tags come from the tag loader). This
+**supersedes** three earlier "cannot" findings:
+
+- **Instruction instance binding imports** - `<Instance Scope="LocalVariable">` is legal
+  inside an instruction `<Part>` but must be the **first child**, before `TemplateValue`s
+  (the earlier "invalid child element Instance" was an element-ORDER violation).
+- **`codedbool_type = DInt`** for `EV1oo2DI V1.3` (with `f_user_card=1` and all image
+  cards `=0`). `ESTOP1 V1.6` / `SFDOOR V1.3` need only `f_user_card=1, f_image_card=0`.
+- **Formal F-DBs import** from canonical `F_DB` GlobalDB XML (the old hand-authored
+  attempt had the wrong shape; export one, template it). **`Main_Safety_RTG1` imports
+  with `-Overwrite`** - the safety-runtime call wiring (zone FBs as multi-instance
+  statics, one Powerrail wire fanning `en` across the `<Call>`s) is fully generatable;
+  the old powerrail->en failure was a malformed wire, not a platform limit.
+
+Net: for this architecture there is **no remaining manual safety-editor step for program
+structure**. Manual scope shrinks to Safety Administration settings, F-parameters, and
+the mandated human review/sign-off. Canonical templates live in
+`PPS_SR_LAB/logic/exported/`; proof script: `spike_roundtrip.ps1` (session scratchpad).
+
 ## Still to fold into the engine (known-doable)
 
 - Fold the proven LAD/F-LAD emission + ET200SP plug + IO-system assignment into
