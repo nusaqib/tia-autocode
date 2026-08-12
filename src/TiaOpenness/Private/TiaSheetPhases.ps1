@@ -67,6 +67,226 @@ function Get-TiaSheetBlockNumber {
     $base + ($i * $step) + $offset
 }
 
+function Get-TiaSheetChannelPlan {
+    <#
+    .SYNOPSIS
+        Resolve every safety channel to a tag name, live address and DB member path.
+    .DESCRIPTION
+        Address = the module's InputBase (read back from the hardware build) + the channel
+        bit. Only BYTE 0 of an F-DI range carries the 8 safe channel values; the remaining
+        6 bytes are diagnostics, so a channel index above 7 is a design error, not an
+        address to compute.
+    #>
+    param($Model, [string]$AddressMapPath)
+
+    if (-not (Test-Path $AddressMapPath)) {
+        throw ("No address map at $AddressMapPath - run -Phase Hardware first. Addresses are " +
+               "assigned by TIA and read back; they are never authored in the sheet.")
+    }
+    $addr = @{}
+    foreach ($r in (Import-Csv $AddressMapPath)) { $addr["$($r.Zone)/$($r.Module)"] = $r }
+
+    $tagPattern = $Model.Project['TagPattern']
+    if (-not $tagPattern) { $tagPattern = 'PPS_{Zone}_{DeviceRef}_{Component}_{Signal}' }
+
+    # The Component level exists in the DB path ONLY when the device's UDT actually nests
+    # it (UDT_SCB has EMO/KeySwitch members; a plain UDT_SafeInput has ChA/ChB directly).
+    # Emitting CH10.KeySwitch.ChB against a UDT_SafeInput compiles to "Tag not defined".
+    $udtMembers = @{}
+    foreach ($u in $Model.Udts) {
+        if (-not $udtMembers.ContainsKey($u.UDT)) { $udtMembers[$u.UDT] = @{} }
+        $udtMembers[$u.UDT][$u.Member] = $true
+    }
+
+    $plan = @(); $problems = @()
+    foreach ($c in $Model.Channels) {
+        if ($c.Signal -eq 'Diag') { continue }
+        $d = $Model.DeviceById[$c.DeviceID]
+        if (-not $d) { $problems += "23_Channels $($c.ChannelID): unknown DeviceID"; continue }
+        $key = "$($d.Zone)/$($c.ModuleName)"
+        if (-not $addr.ContainsKey($key)) { $problems += "23_Channels $($c.ChannelID): module $key not in the address map"; continue }
+        $base = $addr[$key].InputBase
+        if ([string]::IsNullOrWhiteSpace($base)) { $problems += "23_Channels $($c.ChannelID): module $key has no input address"; continue }
+        $bit = 0
+        if (-not [int]::TryParse([string]$c.Channel, [ref]$bit)) { $problems += "23_Channels $($c.ChannelID): Channel '$($c.Channel)' is not an integer"; continue }
+        if ($bit -lt 0 -or $bit -gt 7) {
+            $problems += "23_Channels $($c.ChannelID): channel $bit is outside byte 0 - only the first F-DI byte carries safe channel values"
+            continue
+        }
+        $nests = ($d.UDT -and $udtMembers.ContainsKey($d.UDT) -and
+                  $c.Component -and $udtMembers[$d.UDT].ContainsKey($c.Component))
+        $comp = if ($nests) { $c.Component } else { '' }
+        $plan += [pscustomobject]@{
+            ChannelID = $c.ChannelID
+            Zone      = $d.Zone
+            TagName   = (Expand-TiaSheetPattern -Pattern $tagPattern -Values @{
+                            Zone = $d.Zone; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal })
+            Address   = "%I$([int]$base).$bit"
+            Member    = (@($d.DeviceRef, $comp, $c.Signal) | Where-Object { $_ }) -join '.'
+            Db        = (Expand-TiaSheetPattern -Pattern $(if ($Model.Project['DbPattern']) { $Model.Project['DbPattern'] } else { 'DB_{Zone}' }) -Values @{ Zone = $d.Zone })
+            Polarity  = $c.Polarity
+            Paired    = $c.Paired
+            Component = $c.Component
+            DeviceID  = $c.DeviceID
+            Comment   = $c.Description
+        }
+    }
+    if ($problems.Count) {
+        foreach ($p in $problems) { Write-Host "  $p" -ForegroundColor Red }
+        throw "Channel plan has $($problems.Count) problem(s)."
+    }
+
+    # two signals on one address is a wiring/design fault that the compiler will not catch
+    $byAddr = @{}
+    foreach ($p in $plan) {
+        if ($byAddr.ContainsKey($p.Address)) {
+            throw "23_Channels: $($p.ChannelID) and $($byAddr[$p.Address]) both map to $($p.Address)"
+        }
+        $byAddr[$p.Address] = $p.ChannelID
+    }
+    $plan
+}
+
+function Invoke-TiaSheetTagPhase {
+    <#
+    .SYNOPSIS
+        Phase 4 (Tags): PLC tags at the addresses TIA assigned.
+    .DESCRIPTION
+        In  : 23_Channels, 21_Modules, reports/90_AddressMap.csv
+        Out : tags in 10_Project.TagTableIn, plus reports/91_TagList.csv
+    #>
+    param($Model, [string]$ProjectPath, [string]$AddressMapPath, [string]$ReportDir, [switch]$Save)
+
+    $plan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
+    $table = $Model.Project['TagTableIn']
+    if (-not $table) { $table = 'FTags_In' }
+    Write-Host ("tags: {0} channel(s) -> tag table '{1}'" -f $plan.Count, $table)
+
+    $made = 0; $cErr = 0; $compile = $null
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
+        $existing = @()
+        try { $existing = @(Get-TiaTagTable | ForEach-Object { $_.Name }) } catch { }
+        if ($existing -notcontains $table) { New-TiaTagTable -Name $table | Out-Null }
+        $have = @{}
+        try { foreach ($t in (Get-TiaTag -TagTable $table)) { $have[$t.Name] = $true } } catch { }
+
+        foreach ($p in $plan) {
+            if ($have.ContainsKey($p.TagName)) { continue }
+            New-TiaTag -Name $p.TagName -DataType 'Bool' -Address $p.Address -TagTable $table -Comment $p.Comment | Out-Null
+            $have[$p.TagName] = $true
+            $made++
+        }
+        Write-Host ("  {0} tag(s) created" -f $made)
+
+        $plc = Get-TiaPlc | Select-Object -First 1
+        $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+        try { $cErr = $compile.Errors } catch { }
+        Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+        if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
+
+    if (-not $ReportDir) { $ReportDir = Join-Path (Split-Path -Parent $ProjectPath) 'reports' }
+    if (-not (Test-Path $ReportDir)) { New-Item -ItemType Directory -Force $ReportDir | Out-Null }
+    $rp = Join-Path $ReportDir '91_TagList.csv'
+    $plan | Select-Object Zone, ChannelID, TagName, Address, Db, Member, Polarity |
+        Export-Csv -Path $rp -NoTypeInformation -Encoding ASCII
+    Write-Host ("tag list -> {0}" -f $rp)
+
+    [pscustomobject]@{
+        Ok = ($cErr -eq 0); Phase = 'Tags'; ProjectPath = $ProjectPath
+        Channels = $plan.Count; Created = $made; TagTable = $table; Report = $rp
+        CompileState = [string]$compile.State; CompileErrors = $cErr
+    }
+}
+
+function Invoke-TiaSheetIOMapPhase {
+    <#
+    .SYNOPSIS
+        Phase 5 (IOMap): FB_<zone>_IOMap copying each channel tag into its DB member.
+    .DESCRIPTION
+        In  : 23_Channels (Polarity, Paired), 22_Devices, reports/90_AddressMap.csv
+        Out : FB_<zone>_IOMap (F_LAD), one network per device/component
+        Polarity=NO emits a NEGATED contact. The rung compiles either way, so a wrong or
+        guessed polarity is invisible to the compiler and inverts a trip in the plant -
+        which is why a blank is an error unless -AssumeDefaultPolarity is given explicitly.
+    #>
+    param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
+          [switch]$AssumeDefaultPolarity, [switch]$Save)
+
+    $plan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
+    $default = $Model.Project['DefaultPolarity']
+    if (-not $default) { $default = 'NC' }
+
+    $assumed = @($plan | Where-Object { -not $_.Polarity })
+    if ($assumed.Count) {
+        if (-not $AssumeDefaultPolarity) {
+            throw ("$($assumed.Count) channel(s) have no Polarity. It is a wiring-drawing fact and " +
+                   "is never defaulted silently - a wrong polarity inverts a trip. Fill 23_Channels, " +
+                   "or pass -AssumeDefaultPolarity to build a PROVISIONAL, NON-RELEASABLE program " +
+                   "using DefaultPolarity=$default.")
+        }
+        Write-Host ("  WARNING: assuming DefaultPolarity=$default on $($assumed.Count) channel(s)." ) -ForegroundColor Yellow
+        Write-Host  "  This program is PROVISIONAL and must not be released until 23_Channels.Polarity" -ForegroundColor Yellow
+        Write-Host  "  is confirmed against the wiring drawings." -ForegroundColor Yellow
+        foreach ($p in $assumed) { $p.Polarity = $default }
+    }
+
+    $fbPattern = $Model.Project['BlockPattern']
+    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+
+    $built = @(); $nets = 0
+    foreach ($z in $Model.Zones) {
+        $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
+        if (-not $rows.Count) { continue }
+        $units = @(); $id = 3
+        foreach ($g in ($rows | Group-Object DeviceID, Component)) {
+            $b = New-TiaFlgBuilder
+            foreach ($r in ($g.Group | Sort-Object Signal)) {
+                # Polarity NO => the field contact is closed on demand, so invert it here
+                # and everything downstream reads "1 = safe".
+                Add-TiaFlgRung -Builder $b -From $r.TagName -To "$($r.Db).$($r.Member)" `
+                               -Negated:($r.Polarity -eq 'NO') | Out-Null
+            }
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title ($g.Group[0].Member -split '\.')[0])
+            $id += 5
+            $nets++
+        }
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'IOMap' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'IOMap'
+        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
+        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num; Networks = $units.Count }
+    }
+    Write-Host ("iomap: {0} block(s), {1} network(s), {2} rung(s)" -f $built.Count, $nets, $plan.Count)
+
+    $cErr = 0; $compile = $null
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
+        foreach ($b in $built) {
+            Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
+            Write-Host ("  {0,-18} FB{1,-4} {2,2} networks" -f $b.Name, $b.Number, $b.Networks)
+        }
+        $plc = Get-TiaPlc | Select-Object -First 1
+        $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+        try { $cErr = $compile.Errors } catch { }
+        Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+        if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
+
+    [pscustomobject]@{
+        Ok = ($cErr -eq 0); Phase = 'IOMap'; ProjectPath = $ProjectPath
+        Blocks = @($built | ForEach-Object { $_.Name }); Networks = $nets; Rungs = $plan.Count
+        AssumedPolarity = $assumed.Count
+        Provisional = [bool]$assumed.Count
+        CompileState = [string]$compile.State; CompileErrors = $cErr
+    }
+}
+
 function Invoke-TiaSheetDataPhase {
     <#
     .SYNOPSIS

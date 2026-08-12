@@ -44,15 +44,16 @@ function Invoke-TiaBuildFromSheet {
         [switch]$Force,
         [switch]$Save,
         [switch]$RequireVerified,
+        [switch]$AssumeDefaultPolarity,
         [string]$ReportPath
     )
     $ErrorActionPreference = 'Stop'
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not (Test-Path $Path)) { throw "No design snapshot at $Path" }
 
-    if (@('Hardware','Types','Data') -notcontains $Phase) {
+    if (@('Hardware','Types','Data','Tags','IOMap') -notcontains $Phase) {
         throw ("Phase '$Phase' is not implemented yet. Its input/output contract is defined in " +
-               "the project's docs/BUILD.md; 'Hardware' and 'Types' are built today.")
+               "the project's docs/BUILD.md.")
     }
 
     # --- design gate ------------------------------------------------------------------
@@ -71,10 +72,29 @@ function Invoke-TiaBuildFromSheet {
     $allTabs = @('10_Project','20_Zones','21_Modules','22_Devices','23_Channels','30_UDTs',
                  '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
 
+    # Some errors are about a single COLUMN, not the whole tab. Polarity decides whether
+    # the IOMap emits a negated contact and is irrelevant to tag creation, so it must not
+    # block a phase that never reads it. Keyed on the error text, listing the phases the
+    # column actually feeds.
+    $columnScoped = @{ 'no Polarity' = @('IOMap') }
+
     $val = Test-TiaDesignSheet -Path $Path -RequireVerified:$RequireVerified
     Write-Host "design: $($val.Summary)"
     $mine = @(); $other = @()
     foreach ($e in $val.Errors) {
+        $scoped = $false
+        foreach ($k in $columnScoped.Keys) {
+            if ($e -like "*$k*") {
+                $scoped = $true
+                # -AssumeDefaultPolarity is the caller explicitly accepting this specific
+                # gap; the phase then stamps the result Provisional. Nothing is silent.
+                if ($k -eq 'no Polarity' -and $AssumeDefaultPolarity) { $other += $e }
+                elseif ($columnScoped[$k] -contains $Phase) { $mine += $e }
+                else { $other += $e }
+                break
+            }
+        }
+        if ($scoped) { continue }
         $tab = @($allTabs | Where-Object { $e -like "$_*" }) | Select-Object -First 1
         # no recognisable tab prefix => global (stale snapshot, schema, verified gate)
         if (-not $tab -or $phaseTabs[$Phase] -contains $tab) { $mine += $e } else { $other += $e }
@@ -109,6 +129,16 @@ function Invoke-TiaBuildFromSheet {
         switch ($Phase) {
             'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
             'Data'  { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
+            'IOMap' {
+                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
+                $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
+                return Invoke-TiaSheetIOMapPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -AssumeDefaultPolarity:$AssumeDefaultPolarity -Save:$Save
+            }
+            'Tags'  {
+                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
+                $amap = if ($ReportPath) { $ReportPath } else { Join-Path $repoRoot 'reports\90_AddressMap.csv' }
+                return Invoke-TiaSheetTagPhase -Model $model -ProjectPath $ProjectPath -AddressMapPath $amap -ReportDir (Join-Path $repoRoot 'reports') -Save:$Save
+            }
         }
     }
 
