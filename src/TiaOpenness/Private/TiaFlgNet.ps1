@@ -114,7 +114,8 @@ function Add-TiaFlgRung {
     .SYNOPSIS
         One contact driving one coil: --| |-- ( ) - the IOMap workhorse.
     .PARAMETER Negated
-        Emit an NC contact (Polarity=NO in the sheet: 1 means demand, so it is inverted).
+        Emit an NC contact (23_Channels Invert=Yes: the device is wired against the
+        fail-safe convention, so 0 means OK and the contact is inverted here).
     #>
     param([Parameter(Mandatory)]$Builder, [Parameter(Mandatory)][string]$From,
           [Parameter(Mandatory)][string]$To, [switch]$Negated)

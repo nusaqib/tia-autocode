@@ -15,7 +15,7 @@ function Export-TiaDesignWorkbook {
     .DESCRIPTION
         Emits every tab in schema order with a frozen, bold header row, sized columns and
         dropdown validation on the closed-enum columns - so the safety-critical fields
-        (Polarity, Verified, Instruction, Kind, SensorEval, Include) cannot be typo'd into
+        (Invert, Verified, Instruction, Kind, SensorEval, Include) cannot be typo'd into
         a value the validator will later reject.
 
         Derived data is NOT written: addresses, tag names and member paths come from the
@@ -211,7 +211,15 @@ function Export-TiaDesignWorkbook {
             Add-Entry $zip ('xl/worksheets/sheet{0}.xml' -f ($i + 1)) $sheetXml[$tabs[$i].Name]
         }
     } finally { $zip.Dispose() }
-    Move-Item -Force $tmp $Out
+    # A failed move must NOT look like success: without this the function returned Ok=true
+    # while the workbook on disk still held the previous content and a .tmp was left behind.
+    try { Move-Item -Force -ErrorAction Stop $tmp $Out }
+    catch {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        $lock = Join-Path (Split-Path -Parent $Out) ('~$' + (Split-Path -Leaf $Out))
+        $hint = if (Test-Path $lock) { " It is open in Excel (found $(Split-Path -Leaf $lock)) - close it and retry." } else { '' }
+        throw "Could not replace '$Out': $($_.Exception.Message)$hint"
+    }
 
     [pscustomobject]@{
         Ok    = $true

@@ -32,17 +32,27 @@ $script:TiaSheetSchemaVersion = '1.2'
 #   - 20_Stations gains IpAddress / SubnetMask / DeviceNumber / DeviceName. These were
 #     auto-assigned by TIA and recorded nowhere, so they were neither reviewable nor stable
 #     across rebuilds. Blank still means "let TIA assign".
+#
+# v1.3 changes:
+#   - The key column is 'Area' in EVERY tab (was 'Zone' in 21/22/32/34 and 'Zone' as
+#     20_Stations' own key). One name for one thing: a row's Area is the key into
+#     20_Stations, and {Area} is the naming placeholder. 'Zone' is gone from the schema -
+#     it collided with the radiation-safety meaning of "zone" in the drawings.
+#   - 20_Stations' remaining columns adopt underscore names (Station_Name, Station_Label,
+#     IO_System, IP_Address, Subnet_Mask, Device_Number, Device_Name), separating the
+#     station's TIA name from the Area key that used to be called Station.
+#   - 10_Project: CpuLocalZone -> CpuLocalArea (its value is an Area key).
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
-    '20_Stations'    = @('Zone','Name','Description','Station','StationLabel','IM_MLFB','IM_FW','IOSystem','IpAddress','SubnetMask','DeviceNumber','DeviceName','Verified','Notes')
-    '21_Modules'     = @('Zone','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
-    '22_Devices'     = @('DeviceID','Zone','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
-    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Polarity','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
+    '20_Stations'    = @('Area','Name','Description','Station_Name','Station_Label','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
+    '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
+    '22_Devices'     = @('DeviceID','Area','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
+    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
     '31_Policy'      = @('PolicyID','DeviceType','Component','UDT','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
-    '32_Blocks'      = @('Block','Zone','Layer','Language','Number','Description')
+    '32_Blocks'      = @('Block','Area','Layer','Language','Number','Description')
     '33_SafetyBlocks'= @('RowID','DeviceID','Component','Instruction','Version','InstanceName','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Verified','Notes')
-    '34_Interlocks'  = @('Zone','Target','DeviceID','Member','Include','Rationale','SF_ID')
+    '34_Interlocks'  = @('Area','Target','DeviceID','Member','Include','Rationale','SF_ID')
 }
 # closed enum sets: "Tab.Column" -> allowed values
 $script:TiaSheetEnums = @{
@@ -50,13 +60,13 @@ $script:TiaSheetEnums = @{
     '21_Modules.SensorEval'      = @('1oo1','1oo2')
     '23_Channels.Signal'         = @('ChA','ChB','Diag')
     '23_Channels.Paired'         = @('Yes','No')
-    '23_Channels.Polarity'       = @('NC','NO')
+    '23_Channels.Invert'         = @('Yes','No')
     '22_Devices.InInterlock'     = @('Yes','No')
     '31_Policy.Instruction'      = @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
     '32_Blocks.Layer'            = @('IOMap','Safety','Certified','Runtime','Data')
     '32_Blocks.Language'         = @('F_LAD','F_DB','F_FBD','LAD','SCL')
     '33_SafetyBlocks.Instruction'= @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
-    '34_Interlocks.Target'       = @('Interlocks_OK','Zone_Safe')
+    '34_Interlocks.Target'       = @('Interlocks_OK','Area_Safe')
     '34_Interlocks.Include'      = @('Yes','No')
 }
 $script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','22_Devices','23_Channels','31_Policy','33_SafetyBlocks')
@@ -67,7 +77,7 @@ $script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','22_Devices','23_Cha
 $script:TiaSheetKnownHeaders = [ordered]@{
     '01_Revisions' = @('Rev','Date','Author','Summary','Approver','SnapshotCommit')
     '02_Decisions' = @('DecID','Topic','Question','Decision','Rationale','Status','Owner','Date')
-    '35_Outputs'   = @('OutputID','Zone','DeviceID','Signal','Slot','Channel','DrivenBy','FDBACK')
+    '35_Outputs'   = @('OutputID','Area','DeviceID','Signal','Slot','Channel','DrivenBy','FDBACK')
 }
 foreach ($k in $script:TiaSheetSchema.Keys) { $script:TiaSheetKnownHeaders[$k] = $script:TiaSheetSchema[$k] }
 
@@ -261,7 +271,7 @@ function Sync-TiaDesignSheet {
         $meta = [ordered]@{
             syncedUtc     = (Get-Date).ToUniversalTime().ToString('s') + 'Z'
             source        = $(if ($transport -eq 'workbook') { Split-Path -Leaf $book } else { [string]$cfg.sheetId })
-            sourceSha256  = $(if ($transport -eq 'workbook') { (Get-FileHash -Algorithm SHA256 $book).Hash } else { '' })
+            sourceSha256  = $(if ($transport -eq 'workbook') { Get-TiaSharedFileHash -Path $book } else { '' })
             schemaVersion = $script:TiaSheetSchemaVersion
             transport     = $transport
             tabs          = $state
@@ -314,9 +324,9 @@ function Test-TiaDesignSheet {
     }
 
     # Columns that are legitimately blank on some rows: SensorEval applies only to F-DI,
-    # and Polarity is checked by a dedicated rule below that names the wiring drawing gap
-    # instead of reporting a generic enum failure.
-    $blankOk = @('21_Modules.SensorEval','23_Channels.Polarity')
+    # and a blank Invert means "follows the fail-safe convention" (the overwhelmingly
+    # common case), so requiring an explicit 'No' on 180-odd rows would be noise.
+    $blankOk = @('21_Modules.SensorEval','23_Channels.Invert')
     foreach ($k in $script:TiaSheetEnums.Keys) {
         $t, $c = $k -split '\.', 2
         if (-not $tabs.ContainsKey($t)) { continue }
@@ -346,53 +356,84 @@ function Test-TiaDesignSheet {
     foreach ($r in $tabs['10_Project']) { if ($r.Key) { $proj[$r.Key] = [string]$r.Value } }
     foreach ($k in @('ProjectName','PlcName','CpuMLFB','CpuFW','SubnetName','IoSystemName',
                      'SafetyRuntimeFB','TagTableIn','TagPattern','DbPattern','BlockPattern',
-                     'InstancePattern','BlockNumberBase','BlockNumberStep','DefaultPolarity')) {
+                     'InstancePattern','BlockNumberBase','BlockNumberStep','ModulePattern')) {
         if (-not $proj.ContainsKey($k) -or -not $proj[$k]) { $errors.Add("10_Project: missing key '$k'") }
     }
     if ($proj['SchemaVersion'] -and ([version]$proj['SchemaVersion'] -gt [version]$script:TiaSheetSchemaVersion)) {
         $errors.Add("10_Project: SchemaVersion $($proj['SchemaVersion']) is newer than this engine supports ($script:TiaSheetSchemaVersion)")
     }
-    if ($proj['DefaultPolarity'] -and @('NC','NO') -cnotcontains $proj['DefaultPolarity']) {
-        $errors.Add("10_Project: DefaultPolarity '$($proj['DefaultPolarity'])' must be NC or NO")
-    }
 
-    $zones   = @{}; foreach ($r in $tabs['20_Stations'])  { $zones[$r.Zone] = $r }
+    $areas   = @{}; foreach ($r in $tabs['20_Stations'])  { $areas[$r.Area] = $r }
     $devices = @{}; foreach ($r in $tabs['22_Devices']){ $devices[$r.DeviceID] = $r }
     $udts    = @{}; foreach ($r in $tabs['30_UDTs'])   { $udts[$r.UDT] = $true }
-    $mods    = @{}; foreach ($r in $tabs['21_Modules']){ $mods["$($r.Zone)/$($r.ModuleName)"] = $r }
+    $mods    = @{}; foreach ($r in $tabs['21_Modules']){ $mods["$($r.Area)/$($r.ModuleName)"] = $r }
 
     $refSeen = @{}; $idSeen = @{}
     foreach ($r in $tabs['22_Devices']) {
-        if (-not $zones.ContainsKey($r.Zone)) { $errors.Add("22_Devices $($r.DeviceID): unknown Zone '$($r.Zone)'") }
+        if (-not $areas.ContainsKey($r.Area)) { $errors.Add("22_Devices $($r.DeviceID): unknown Area '$($r.Area)'") }
         if ($r.UDT -and -not $udts.ContainsKey($r.UDT)) { $errors.Add("22_Devices $($r.DeviceID): UDT '$($r.UDT)' not in 30_UDTs") }
         if ($idSeen.ContainsKey($r.DeviceID)) { $errors.Add("22_Devices: duplicate DeviceID '$($r.DeviceID)'") }
         else { $idSeen[$r.DeviceID] = $true }
-        # DeviceRef becomes the F-DB member name, so it must be unique within its zone or
+        # DeviceRef becomes the F-DB member name, so it must be unique within its area or
         # two devices silently share one set of safety data
-        $k = "$($r.Zone)|$($r.DeviceRef)"
+        $k = "$($r.Area)|$($r.DeviceRef)"
         if ($refSeen.ContainsKey($k)) {
-            $errors.Add("22_Devices: zone $($r.Zone) has two devices with DeviceRef '$($r.DeviceRef)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
+            $errors.Add("22_Devices: area $($r.Area) has two devices with DeviceRef '$($r.DeviceRef)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
         } else { $refSeen[$k] = $r.DeviceID }
     }
-    $ipSeen = @{}; $dnSeen = @{}; $stSeen = @{}
+    $ipSeen = @{}; $dnSeen = @{}; $stSeen = @{}; $maskByIo = @{}
     foreach ($r in $tabs['20_Stations']) {
         # A duplicate IP or PROFINET device number is a network fault the compiler will not
         # catch; a duplicate station name collides in the project tree.
-        foreach ($pair in @(@('IpAddress',$ipSeen), @('DeviceNumber',$dnSeen), @('Station',$stSeen))) {
+        foreach ($pair in @(@('IP_Address',$ipSeen), @('Device_Number',$dnSeen), @('Station_Name',$stSeen))) {
             $col = $pair[0]; $map = $pair[1]
             $v = [string]$r.$col
             if (-not $v) { continue }
-            if ($map.ContainsKey($v)) { $errors.Add("20_Stations: $col '$v' used by both $($map[$v]) and $($r.Zone)") }
-            else { $map[$v] = $r.Zone }
+            if ($map.ContainsKey($v)) { $errors.Add("20_Stations: $col '$v' used by both $($map[$v]) and $($r.Area)") }
+            else { $map[$v] = $r.Area }
         }
-        if ($r.IpAddress -and $r.IpAddress -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
-            $errors.Add("20_Stations $($r.Zone): IpAddress '$($r.IpAddress)' is not a dotted IPv4 address")
+        if ($r.IP_Address -and $r.IP_Address -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+            $errors.Add("20_Stations $($r.Area): IP_Address '$($r.IP_Address)' is not a dotted IPv4 address")
+        }
+        # A subnet mask must be a run of 1-bits followed by 0-bits. Excel drag-fill happily
+        # produces 255.255.255.1, .2, .3 - each a valid-LOOKING dotted quad that no station
+        # will ever come online with, and nothing downstream would have complained.
+        if ($r.Subnet_Mask) {
+            $bad = Test-TiaSubnetMask -Mask $r.Subnet_Mask
+            if ($bad) { $errors.Add("20_Stations $($r.Area): Subnet_Mask '$($r.Subnet_Mask)' $bad") }
+            elseif ($r.IO_System) {
+                # every station on one IO system shares one subnet, by definition
+                if (-not $maskByIo.ContainsKey($r.IO_System)) { $maskByIo[$r.IO_System] = @{} }
+                $maskByIo[$r.IO_System][$r.Subnet_Mask] = $r.Area
+            }
         }
     }
+    foreach ($io in $maskByIo.Keys) {
+        if ($maskByIo[$io].Count -gt 1) {
+            $seen = ($maskByIo[$io].Keys | Sort-Object) -join ', '
+            $errors.Add("20_Stations: IO system '$io' has stations on $($maskByIo[$io].Count) different subnet masks ($seen) - one IO system is one subnet")
+        }
+    }
+    $modNameSeen = @{}
+    $modPattern = $proj['ModulePattern']
     foreach ($r in $tabs['21_Modules']) {
-        if (-not $zones.ContainsKey($r.Zone)) { $errors.Add("21_Modules $($r.ModuleName): unknown Zone '$($r.Zone)'") }
+        if (-not $areas.ContainsKey($r.Area)) { $errors.Add("21_Modules $($r.ModuleName): unknown Area '$($r.Area)'") }
         $slot = 0
         if (-not [int]::TryParse([string]$r.Slot, [ref]$slot)) { $errors.Add("21_Modules $($r.ModuleName): Slot '$($r.Slot)' is not an integer") }
+        # 23_Channels joins on Area+ModuleName, so a duplicate silently merges two racks'
+        # worth of channels onto one module.
+        $mk = "$($r.Area)/$($r.ModuleName)"
+        if ($modNameSeen.ContainsKey($mk)) { $errors.Add("21_Modules: area $($r.Area) has two modules named '$($r.ModuleName)' (slots $($modNameSeen[$mk]) and $($r.Slot))") }
+        else { $modNameSeen[$mk] = $r.Slot }
+        # ModuleName stays authored data (it is a foreign key), but drift from the declared
+        # convention is reported so the names stay predictable across 76 modules.
+        if ($modPattern -and $r.ModuleName -and $r.Kind) {
+            $want = Expand-TiaSheetPattern -Pattern $modPattern -Values @{
+                Area = $r.Area; Kind = (Get-TiaModuleKindToken $r.Kind); Slot = $r.Slot }
+            if ($r.ModuleName -cne $want) {
+                $warns.Add("21_Modules $($r.Area) slot $($r.Slot): ModuleName '$($r.ModuleName)' does not match ModulePattern (expected '$want')")
+            }
+        }
     }
 
     # channels: referential + safety
@@ -400,9 +441,9 @@ function Test-TiaDesignSheet {
     foreach ($r in $tabs['23_Channels']) {
         $id = $r.ChannelID
         if (-not $devices.ContainsKey($r.DeviceID)) { $errors.Add("23_Channels ${id}: unknown DeviceID '$($r.DeviceID)'"); continue }
-        $z = $devices[$r.DeviceID].Zone
+        $z = $devices[$r.DeviceID].Area
         if ($r.ModuleName -and -not $mods.ContainsKey("$z/$($r.ModuleName)")) {
-            $errors.Add("23_Channels ${id}: ModuleName '$($r.ModuleName)' not a module of zone $z")
+            $errors.Add("23_Channels ${id}: ModuleName '$($r.ModuleName)' not a module of area $z")
         }
         if ($r.Signal -ne 'Diag') {
             if ("$($r.Slot)$($r.Channel)" -eq '') {
@@ -429,15 +470,26 @@ function Test-TiaDesignSheet {
         }
     }
 
-    # Polarity is a wiring-drawing fact and cannot be inferred. A wrong guess inverts a
-    # trip, so a blank is reported as a specific gap rather than silently defaulted.
-    $noPol = @($tabs['23_Channels'] | Where-Object { $_.Signal -ne 'Diag' -and -not $_.Polarity })
-    if ($noPol.Count) {
-        # build the message first: inside Add(...) a comma binds to the method call, not
-        # to -f, which silently turned this rule into a thrown FormatError
-        $msg = "23_Channels: $($noPol.Count) safety channel(s) have no Polarity - it must " +
-               "come from the wiring drawing, never a default (first: $($noPol[0].ChannelID))"
-        $errors.Add($msg)
+    # SIGNAL SENSE. The project convention is fail-safe: at the PLC input, 1 = OK and
+    # 0 = fault/demand, so a channel maps straight through. Invert=Yes marks a field device
+    # wired the other way round and the IOMap negates that contact.
+    #
+    # This is a declared convention, not a guess - but a channel that silently breaks it is
+    # exactly the failure a blank cannot distinguish from a correct blank. The gate that
+    # bites is therefore Verified on 23_Channels, not the presence of a value here.
+    $inv = @($tabs['23_Channels'] | Where-Object { $_.Signal -ne 'Diag' -and $_.Invert -eq 'Yes' })
+    if ($inv.Count) {
+        $msg = "23_Channels: $($inv.Count) channel(s) are Invert=Yes - each emits a NEGATED " +
+               "contact against the fail-safe convention (first: $($inv[0].ChannelID))"
+        $warns.Add($msg)
+    }
+    $unverChan = @($tabs['23_Channels'] | Where-Object { $_.Signal -ne 'Diag' -and $_.Verified -ne 'Yes' })
+    if ($unverChan.Count) {
+        # A blank Invert asserts "this channel is fail-safe". Nothing in the data can prove
+        # that; only a person reading the drawing can, and Verified is where they say so.
+        $msg = "23_Channels: $($unverChan.Count) safety channel(s) are Verified<>Yes - the " +
+               "fail-safe sense of each is unconfirmed against the wiring drawing"
+        $warns.Add($msg)
     }
 
     # UDT members referenced by the trip path must actually exist, or the generated
@@ -542,8 +594,19 @@ function Test-TiaDesignSheet {
                                "The build reads $(Split-Path -Leaf $Path), not the workbook."
                         $errors.Add($msg)
                     }
+                    # We read the bytes Excel last WROTE, which is what a build would
+                    # consume - but not what is on the author's screen. A clean compare
+                    # while the book is open proves the saved state matches, nothing more.
+                    if (Test-TiaXlsxOpenInExcel -Path $wb[0].FullName) {
+                        $warns.Add("$($wb[0].Name) is open in Excel - only its SAVED state was compared; save and re-sync before relying on this")
+                    }
                 } catch {
-                    $warns.Add("could not compare $($wb[0].Name) against the snapshot: $($_.Exception.Message)")
+                    # Fail CLOSED. If the workbook cannot be read we cannot prove the
+                    # snapshot is current, and a warning here would let a build proceed on
+                    # possibly stale safety data - the exact thing this guard exists to stop.
+                    $lock = Join-Path $designDir ('~$' + $wb[0].Name)
+                    $hint = if (Test-Path $lock) { ' It is open in Excel - close it and re-run.' } else { '' }
+                    $errors.Add("cannot verify $($wb[0].Name) against the snapshot: $($_.Exception.Message)$hint")
                 }
             }
         }
@@ -558,7 +621,7 @@ function Test-TiaDesignSheet {
         if ($RequireVerified) { $errors.Add($msg) } else { $warns.Add($msg) }
     }
 
-    $summary = ("{0} zones, {1} modules, {2} devices, {3} channels, {4} safety blocks, {5} unverified" -f
+    $summary = ("{0} areas, {1} modules, {2} devices, {3} channels, {4} safety blocks, {5} unverified" -f
         $tabs['20_Stations'].Count, $tabs['21_Modules'].Count, $tabs['22_Devices'].Count,
         $tabs['23_Channels'].Count, $tabs['33_SafetyBlocks'].Count, $unver)
     [pscustomobject]@{ Ok = ($errors.Count -eq 0); Errors = $errors; Warnings = $warns; Summary = $summary }

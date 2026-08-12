@@ -7,8 +7,7 @@ function Get-TiaXlsxSheetName {
         Tab names of an .xlsx, in workbook order (dependency-free: zip + xl/workbook.xml).
     #>
     param([Parameter(Mandatory)][string]$Path)
-    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    $zip = Open-TiaXlsxArchive -Path $Path
     try {
         $e = $zip.Entries | Where-Object { $_.FullName -eq 'xl/workbook.xml' }
         if (-not $e) { throw "not an xlsx (no xl/workbook.xml): $Path" }
@@ -21,8 +20,8 @@ function Get-TiaXlsxSheetName {
 function Read-TiaSheetModel {
     <#
     .SYNOPSIS
-        Load design/csv into a model: Project, Zones, Modules, Devices, Channels, Udts,
-        Blocks, SafetyBlocks, Interlocks - with per-zone indexes the builder needs.
+        Load design/csv into a model: Project, Areas, Modules, Devices, Channels, Udts,
+        Blocks, SafetyBlocks, Interlocks - with per-area indexes the builder needs.
     #>
     param([Parameter(Mandatory)][string]$Path)
 
@@ -61,19 +60,19 @@ function Read-TiaSheetModel {
     }
     $model | Add-Member -NotePropertyName ChannelsByDevice -NotePropertyValue $chanByDev
 
-    $modByZone = @{}
+    $modByArea = @{}
     foreach ($x in $model.Modules) {
-        if (-not $modByZone.ContainsKey($x.Zone)) { $modByZone[$x.Zone] = @() }
-        $modByZone[$x.Zone] += $x
+        if (-not $modByArea.ContainsKey($x.Area)) { $modByArea[$x.Area] = @() }
+        $modByArea[$x.Area] += $x
     }
-    $model | Add-Member -NotePropertyName ModulesByZone -NotePropertyValue $modByZone
+    $model | Add-Member -NotePropertyName ModulesByArea -NotePropertyValue $modByArea
 
-    $devByZone = @{}
+    $devByArea = @{}
     foreach ($d in $model.Devices) {
-        if (-not $devByZone.ContainsKey($d.Zone)) { $devByZone[$d.Zone] = @() }
-        $devByZone[$d.Zone] += $d
+        if (-not $devByArea.ContainsKey($d.Area)) { $devByArea[$d.Area] = @() }
+        $devByArea[$d.Area] += $d
     }
-    $model | Add-Member -NotePropertyName DevicesByZone -NotePropertyValue $devByZone
+    $model | Add-Member -NotePropertyName DevicesByArea -NotePropertyValue $devByArea
 
     $model
 }
@@ -81,7 +80,7 @@ function Read-TiaSheetModel {
 function Expand-TiaSheetPattern {
     <#
     .SYNOPSIS
-        Expand a naming pattern from 10_Project. Placeholders: {Zone} {DeviceRef}
+        Expand a naming pattern from 10_Project. Placeholders: {Area} {DeviceRef}
         {Component} {Signal} {Layer} {Instruction} {Instance}.
     #>
     param([Parameter(Mandatory)][string]$Pattern, [hashtable]$Values)
@@ -91,20 +90,51 @@ function Expand-TiaSheetPattern {
     ($s -replace '_{2,}', '_').Trim('_')
 }
 
-function Get-TiaSheetZoneChannels {
+function Resolve-TiaProjectPath {
     <#
     .SYNOPSIS
-        All safety (non-Diag) channels of a zone, with device context attached.
+        Absolute output-project path for a design snapshot.
+    .DESCRIPTION
+        Precedence: an explicit -ProjectPath, then 10_Project's ProjectPath, then
+        <repo>\_out\<ProjectName>. A RELATIVE value is resolved against the design repo
+        root, never against the caller's current directory - the sheet says where a project
+        goes relative to its own repo, and a build must land in the same place whatever
+        directory it was launched from.
     #>
-    param($Model, [string]$Zone)
+    param([string]$ProjectPath, [Parameter(Mandatory)]$Project, [Parameter(Mandatory)][string]$RepoRoot)
+    $p = $ProjectPath
+    if (-not $p) { $p = [string]$Project['ProjectPath'] }
+    if (-not $p) { $p = Join-Path '_out' ([string]$Project['ProjectName']) }
+    if (-not [System.IO.Path]::IsPathRooted($p)) { $p = Join-Path $RepoRoot $p }
+    [System.IO.Path]::GetFullPath($p)
+}
+
+function Get-TiaModuleKindToken {
+    <#
+    .SYNOPSIS
+        21_Modules.Kind as a name token: 'F-DI' -> 'FDI'.
+    .DESCRIPTION
+        The Kind enum is the catalogue spelling ('F-DI'); a hyphen is not legal in a TIA
+        object name, so ModulePattern gets the stripped form.
+    #>
+    param([string]$Kind)
+    ([string]$Kind) -replace '[^A-Za-z0-9]', ''
+}
+
+function Get-TiaSheetAreaChannels {
+    <#
+    .SYNOPSIS
+        All safety (non-Diag) channels of an area, with device context attached.
+    #>
+    param($Model, [string]$Area)
     $out = @()
-    foreach ($d in @($Model.DevicesByZone[$Zone])) {
+    foreach ($d in @($Model.DevicesByArea[$Area])) {
         foreach ($c in @($Model.ChannelsByDevice[$d.DeviceID])) {
             if ($c.Signal -eq 'Diag') { continue }
             $out += [pscustomobject]@{
                 Channel = $c; Device = $d
                 TagName = Expand-TiaSheetPattern -Pattern $Model.Project['TagPattern'] -Values @{
-                    Zone = $Zone; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal }
+                    Area = $Area; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal }
                 MemberPath = "$($d.DeviceRef).$($c.Component).$($c.Signal)"
             }
         }

@@ -8,7 +8,7 @@ function Invoke-TiaBuildFromSheet {
     .SYNOPSIS
         Build a TIA Portal project from a design-sheet CSV snapshot.
     .DESCRIPTION
-        Phase 'Hardware' creates the project, the CPU, one station per zone, plugs every
+        Phase 'Hardware' creates the project, the CPU, one station per area, plugs every
         module at its designed slot, wires one PROFINET subnet + IO system, compiles, and
         reports the assigned I/O addresses.
 
@@ -44,7 +44,6 @@ function Invoke-TiaBuildFromSheet {
         [switch]$Force,
         [switch]$Save,
         [switch]$RequireVerified,
-        [switch]$AssumeDefaultPolarity,
         [string]$ReportPath
     )
     $ErrorActionPreference = 'Stop'
@@ -53,8 +52,8 @@ function Invoke-TiaBuildFromSheet {
 
     
     # --- design gate ------------------------------------------------------------------
-    # Scoped to the phase's OWN input tabs (the contract in docs/BUILD.md): a missing
-    # polarity in 23_Channels must not block UDT creation, which never reads that tab.
+    # Scoped to the phase's OWN input tabs (the contract in docs/BUILD.md): a bad channel
+    # row must not block UDT creation, which never reads that tab.
     # Anything global (stale snapshot, schema failure) blocks every phase.
     $phaseTabs = @{
         'Hardware'  = @('10_Project','20_Stations','21_Modules')
@@ -68,29 +67,10 @@ function Invoke-TiaBuildFromSheet {
     $allTabs = @('10_Project','20_Stations','21_Modules','22_Devices','23_Channels','30_UDTs',
                  '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
 
-    # Some errors are about a single COLUMN, not the whole tab. Polarity decides whether
-    # the IOMap emits a negated contact and is irrelevant to tag creation, so it must not
-    # block a phase that never reads it. Keyed on the error text, listing the phases the
-    # column actually feeds.
-    $columnScoped = @{ 'no Polarity' = @('IOMap') }
-
     $val = Test-TiaDesignSheet -Path $Path -RequireVerified:$RequireVerified
     Write-Host "design: $($val.Summary)"
     $mine = @(); $other = @()
     foreach ($e in $val.Errors) {
-        $scoped = $false
-        foreach ($k in $columnScoped.Keys) {
-            if ($e -like "*$k*") {
-                $scoped = $true
-                # -AssumeDefaultPolarity is the caller explicitly accepting this specific
-                # gap; the phase then stamps the result Provisional. Nothing is silent.
-                if ($k -eq 'no Polarity' -and $AssumeDefaultPolarity) { $other += $e }
-                elseif ($columnScoped[$k] -contains $Phase) { $mine += $e }
-                else { $other += $e }
-                break
-            }
-        }
-        if ($scoped) { continue }
         $tab = @($allTabs | Where-Object { $e -like "$_*" }) | Select-Object -First 1
         # no recognisable tab prefix => global (stale snapshot, schema, verified gate)
         if (-not $tab -or $phaseTabs[$Phase] -contains $tab) { $mine += $e } else { $other += $e }
@@ -116,29 +96,31 @@ function Invoke-TiaBuildFromSheet {
 
     $model = Read-TiaSheetModel -Path $Path
     $proj  = $model.Project
+    # 10_Project's ProjectPath is relative TO THE DESIGN REPO, not to whatever directory the
+    # caller happens to be sitting in - anchoring it on the shell's location silently built
+    # one repo's design into another repo's _out.
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
 
     if ($Phase -ne 'Hardware') {
-        if (-not $ProjectPath) { $ProjectPath = $proj['ProjectPath'] }
-        if (-not $ProjectPath) { $ProjectPath = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) ('_out\' + $proj['ProjectName']) }
-        $ProjectPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ProjectPath)
-        $xmlDir = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) '_out\xml'
+        $ProjectPath = Resolve-TiaProjectPath -ProjectPath $ProjectPath -Project $proj -RepoRoot $repoRoot
+        $xmlDir = Join-Path $repoRoot '_out\xml'
         switch ($Phase) {
             'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
             'Data'  { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
             'Safety' {
                 $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
                 $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetSafetyPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -AssumeDefaultPolarity:$AssumeDefaultPolarity -Save:$Save
+                return Invoke-TiaSheetSafetyPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
             }
             'Certified' {
                 $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
                 $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetCertifiedPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -AssumeDefaultPolarity:$AssumeDefaultPolarity -Save:$Save
+                return Invoke-TiaSheetCertifiedPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
             }
             'IOMap' {
                 $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
                 $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetIOMapPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -AssumeDefaultPolarity:$AssumeDefaultPolarity -Save:$Save
+                return Invoke-TiaSheetIOMapPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
             }
             'Tags'  {
                 $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
@@ -156,28 +138,26 @@ function Invoke-TiaBuildFromSheet {
     if (-not @($model.Stations).Count)   { $fatal += "20_Stations is empty" }
     if (-not @($model.Modules).Count) { $fatal += "21_Modules is empty" }
     foreach ($m in $model.Modules) {
-        if (-not $m.MLFB)       { $fatal += "21_Modules $($m.Zone)/$($m.ModuleName): no MLFB" }
-        if (-not $m.ModuleName) { $fatal += "21_Modules $($m.Zone) slot $($m.Slot): no ModuleName" }
+        if (-not $m.MLFB)       { $fatal += "21_Modules $($m.Area)/$($m.ModuleName): no MLFB" }
+        if (-not $m.ModuleName) { $fatal += "21_Modules $($m.Area) slot $($m.Slot): no ModuleName" }
     }
     foreach ($z in $model.Stations) {
-        if (-not $z.Station) { $fatal += "20_Stations $($z.Zone): no Station name" }
-        $isLocal = ($z.Zone -eq $proj['CpuLocalZone'])
-        if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Stations $($z.Zone): remote station needs IM_MLFB" }
+        if (-not $z.Station_Name) { $fatal += "20_Stations $($z.Area): no Station name" }
+        $isLocal = ($z.Area -eq $proj['CpuLocalArea'])
+        if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Stations $($z.Area): remote station needs IM_MLFB" }
     }
     if ($fatal.Count) {
         foreach ($f in $fatal) { Write-Host "  $f" -ForegroundColor Red }
         throw "Hardware rows are incomplete - $($fatal.Count) problem(s). These are never waived by -Force."
     }
 
-    if (-not $ProjectPath) { $ProjectPath = $proj['ProjectPath'] }
-    if (-not $ProjectPath) { $ProjectPath = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) ('_out\' + $proj['ProjectName']) }
-    $ProjectPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ProjectPath)
+    $ProjectPath = Resolve-TiaProjectPath -ProjectPath $ProjectPath -Project $proj -RepoRoot $repoRoot
 
-    $localZone = $proj['CpuLocalZone']
+    $localArea = $proj['CpuLocalArea']
     Write-Host ("build: {0} -> {1}" -f $proj['ProjectName'], $ProjectPath)
-    Write-Host ("  {0} zones, {1} modules, CPU {2} ({3} local: {4})" -f
+    Write-Host ("  {0} areas, {1} modules, CPU {2} ({3} local: {4})" -f
         @($model.Stations).Count, @($model.Modules).Count, $proj['CpuMLFB'],
-        $proj['PlcName'], $(if ($localZone) { $localZone } else { '(none)' }))
+        $proj['PlcName'], $(if ($localArea) { $localArea } else { '(none)' }))
 
     # --- project + CPU ------------------------------------------------------------------
     if (Test-Path $ProjectPath) {
@@ -194,15 +174,15 @@ function Invoke-TiaBuildFromSheet {
     $cpuDev = $project.Devices | Where-Object { $_.Name -eq $proj['PlcName'] } | Select-Object -First 1
     if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' was not created." }
 
-    $plugged = 0; $failed = @(); $stations = @(); $netWarn = @()
+    $plugged = 0; $failed = @(); $stations = @(); $netWarn = @(); $labelled = 0
     $niType = [Siemens.Engineering.HW.Features.NetworkInterface]
 
-    # --- CPU-local zone: modules ride the CPU's own ET200SP rack ------------------------
+    # --- CPU-local area: modules ride the CPU's own ET200SP rack ------------------------
     $cpuItems = Get-TiaDeviceItemTree -Device $cpuDev
     $localOk = $false
-    if ($localZone) {
+    if ($localArea) {
         $cpuRack = $cpuItems | Where-Object { $_.Name -eq 'Rack_0' } | Select-Object -First 1
-        $localMods = @($model.ModulesByZone[$localZone] | Where-Object { $_.Kind -ne 'IM' } |
+        $localMods = @($model.ModulesByArea[$localArea] | Where-Object { $_.Kind -ne 'IM' } |
                        Sort-Object { [int]$_.Slot })
         if ($cpuRack -and $localMods.Count) {
             $localOk = $true
@@ -211,14 +191,14 @@ function Invoke-TiaBuildFromSheet {
                 $slot = [int]$m.Slot + 1
                 $item = Add-TiaModuleProbed -Rack $cpuRack -OrderNumber $m.MLFB -Name $m.ModuleName -Slot $slot -Firmware $m.FW
                 if ($item) { $plugged++ }
-                else { $localOk = $false; $failed += "$localZone/$($m.ModuleName) @ CPU slot $slot"; break }
+                else { $localOk = $false; $failed += "$localArea/$($m.ModuleName) @ CPU slot $slot"; break }
             }
         }
         if ($localOk) {
-            Write-Host ("  {0,-9} {1,2} modules on the CPU rack" -f $localZone, $localMods.Count)
-            $stations += [pscustomobject]@{ Zone = $localZone; Station = $proj['PlcName']; Device = $cpuDev; Local = $true }
+            Write-Host ("  {0,-9} {1,2} modules on the CPU rack" -f $localArea, $localMods.Count)
+            $stations += [pscustomobject]@{ Area = $localArea; Station = $proj['PlcName']; Device = $cpuDev; Local = $true }
         } else {
-            Write-Host "  $localZone local plug failed - falling back to a remote station" -ForegroundColor Yellow
+            Write-Host "  $localArea local plug failed - falling back to a remote station" -ForegroundColor Yellow
             $plugged = 0
         }
     }
@@ -231,39 +211,44 @@ function Invoke-TiaBuildFromSheet {
     $ctrl = $cpuNi.IoControllers | Select-Object -First 1
     $ioSystem = $ctrl.IoSystem
     if ($null -eq $ioSystem) { $ioSystem = $ctrl.CreateIoSystem($proj['IoSystemName']) }
-    # the CPU takes its addressing from the local zone's station row, so the controller is
+    # the CPU takes its addressing from the local area's station row, so the controller is
     # declared in the same place as every device it controls
-    if ($localZone) {
-        $lz = @($model.Stations | Where-Object { $_.Zone -eq $localZone }) | Select-Object -First 1
+    if ($localArea) {
+        $lz = @($model.Stations | Where-Object { $_.Area -eq $localArea }) | Select-Object -First 1
         if ($lz) {
             $cn = Set-TiaStationNetwork -Node ($cpuNi.Nodes | Select-Object -First 1) -Interface $cpuNi `
-                      -IpAddress $lz.IpAddress -SubnetMask $lz.SubnetMask -DeviceName $lz.DeviceName
+                      -IpAddress $lz.IP_Address -SubnetMask $lz.Subnet_Mask -DeviceName $lz.Device_Name
             foreach ($f in $cn.Failed) { $netWarn += "$($proj['PlcName']) : $f" }
             if ($cn.Applied.Count) { Write-Host ("  CPU network: " + ($cn.Applied -join ' ')) }
+            $lzLabel = (@($lz.Description, $lz.Station_Label) | Where-Object { $_ } | Select-Object -Unique) -join ' - '
+            if (Set-TiaDeviceComment -Device $cpuDev -Comment $lzLabel) { $labelled++ }
         }
     }
     Write-Host ("  subnet '{0}', IO system '{1}'" -f $subnet.Name, $ioSystem.Name)
 
     # --- remote stations ------------------------------------------------------------------
     foreach ($z in $model.Stations) {
-        if ($localOk -and $z.Zone -eq $localZone) { continue }
-        $station = $z.Station
+        if ($localOk -and $z.Area -eq $localArea) { continue }
+        $station = $z.Station_Name
         $imFw = $z.IM_FW
         $imTid = "OrderNumber:$($z.IM_MLFB)" + $(if ($imFw) { if ($imFw -like '/*') { $imFw } else { "/$imFw" } } else { '' })
         $project.Devices.CreateWithItem($imTid, $station, $station) | Out-Null
         $iod = $project.Devices | Where-Object { $_.Name -eq $station } | Select-Object -First 1
         if (-not $iod) { throw "Station '$station' was not created (IM $imTid)." }
 
+        $label = (@($z.Description, $z.Station_Label) | Where-Object { $_ } | Select-Object -Unique) -join ' - '
+        if (Set-TiaDeviceComment -Device $iod -Comment $label) { $labelled++ }
+
         $items = Get-TiaDeviceItemTree -Device $iod
         $rack = $items | Where-Object { $_.Name -eq 'Rack_0' } | Select-Object -First 1
         if (-not $rack) { throw "Station '$station' has no Rack_0." }
 
-        $mods = @($model.ModulesByZone[$z.Zone] | Where-Object { $_.Kind -ne 'IM' } | Sort-Object { [int]$_.Slot })
+        $mods = @($model.ModulesByArea[$z.Area] | Where-Object { $_.Kind -ne 'IM' } | Sort-Object { [int]$_.Slot })
         $n = 0
         foreach ($m in $mods) {
             $item = Add-TiaModuleProbed -Rack $rack -OrderNumber $m.MLFB -Name $m.ModuleName -Slot ([int]$m.Slot) -Firmware $m.FW
             if ($item) { $plugged++; $n++ }
-            else { $failed += "$($z.Zone)/$($m.ModuleName) @ slot $($m.Slot) ($($m.MLFB))" }
+            else { $failed += "$($z.Area)/$($m.ModuleName) @ slot $($m.Slot) ($($m.MLFB))" }
         }
 
         $imNiItem = $items | Where-Object { $_.Name -match 'PROFINET' } | Select-Object -First 1
@@ -273,15 +258,16 @@ function Invoke-TiaBuildFromSheet {
         $imNode.ConnectToSubnet($subnet)
         ($imNi.IoConnectors | Select-Object -First 1).ConnectToIoSystem($ioSystem)
 
-        $net = Set-TiaStationNetwork -Node $imNode -Interface $imNi -IpAddress $z.IpAddress `
-                   -SubnetMask $z.SubnetMask -DeviceNumber $z.DeviceNumber -DeviceName $z.DeviceName
+        $net = Set-TiaStationNetwork -Node $imNode -Interface $imNi -IpAddress $z.IP_Address `
+                   -SubnetMask $z.Subnet_Mask -DeviceNumber $z.Device_Number -DeviceName $z.Device_Name
         foreach ($f in $net.Failed) { $netWarn += "$station : $f" }
 
         Write-Host ("  {0,-9} {1,2}/{2} modules -> IO system{3}" -f $station, $n, $mods.Count,
                     $(if ($net.Applied.Count) { '  ' + ($net.Applied -join ' ') } else { '' }))
-        $stations += [pscustomobject]@{ Zone = $z.Zone; Station = $station; Device = $iod; Local = $false }
+        $stations += [pscustomobject]@{ Area = $z.Area; Station = $station; Device = $iod; Local = $false }
     }
 
+    Write-Host ("  as-built labels written to device comments: {0}" -f $labelled)
     if ($netWarn.Count) {
         Write-Host "  $($netWarn.Count) network attribute(s) could not be set (names vary by TIA version):" -ForegroundColor Yellow
         foreach ($w in $netWarn) { Write-Host "    $w" -ForegroundColor Yellow }
@@ -303,7 +289,7 @@ function Invoke-TiaBuildFromSheet {
     # closes the loop back to the design.
     $addr = @()
     foreach ($s in $stations) {
-        $addr += Get-TiaModuleAddress -Device $s.Device -Zone $s.Zone -Station $s.Station
+        $addr += Get-TiaModuleAddress -Device $s.Device -Area $s.Area -Station $s.Station
     }
     if (-not $ReportPath) {
         $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
@@ -326,7 +312,7 @@ function Invoke-TiaBuildFromSheet {
         Ok           = ($failed.Count -eq 0 -and $cErr -eq 0)
         Phase        = $Phase
         ProjectPath  = $ProjectPath
-        Zones        = @($model.Stations).Count
+        Areas        = @($model.Stations).Count
         Stations     = $stations.Count
         ModulesPlanned = @($model.Modules | Where-Object { $_.Kind -ne 'IM' }).Count
         ModulesPlugged = $plugged

@@ -154,12 +154,37 @@ function Set-TiaStationNetwork {
     [pscustomobject]@{ Applied = $applied; Failed = $failed }
 }
 
+function Set-TiaDeviceComment {
+    <#
+    .SYNOPSIS
+        Write the as-built label onto a device's Comment (device properties / network view).
+    .DESCRIPTION
+        This is where a rack label like "SAFETY RACK S1014" belongs: TIA exposes a writable
+        Comment on the Device and on its head DeviceItem, and no plant-designation field is
+        reachable through Openness. Without it, StationLabel would be a column the build
+        declares and never applies.
+    #>
+    param($Device, [string]$Comment)
+    if (-not $Comment -or -not $Device) { return $null }
+    # SetAttribute on the Device itself does NOT throw and does NOT persist, so a
+    # non-throwing call is not evidence of success - read it back. The head DeviceItem is
+    # the target that actually holds the comment shown in device properties.
+    foreach ($target in @(($Device.DeviceItems | Select-Object -First 1), $Device)) {
+        if (-not $target) { continue }
+        try {
+            $target.SetAttribute('Comment', $Comment)
+            if ([string]$target.GetAttribute('Comment') -eq $Comment) { return $Comment }
+        } catch { }
+    }
+    $null
+}
+
 function Get-TiaModuleAddress {
     <#
     .SYNOPSIS
         Input/output start addresses of every addressable item under a device.
     #>
-    param($Device, [string]$Zone, [string]$Station)
+    param($Device, [string]$Area, [string]$Station)
     $rows = @()
     foreach ($m in (Get-TiaDeviceItemTree -Device $Device)) {
         $inB = $null; $outB = $null
@@ -171,7 +196,7 @@ function Get-TiaModuleAddress {
         } catch { }
         if ($null -ne $inB -or $null -ne $outB) {
             $rows += [pscustomobject]@{
-                Zone = $Zone; Station = $Station; Module = $m.Name
+                Area = $Area; Station = $Station; Module = $m.Name
                 InputBase = $inB; OutputBase = $outB
             }
         }

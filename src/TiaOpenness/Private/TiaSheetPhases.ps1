@@ -58,21 +58,21 @@ function Test-TiaFailsafeType {
 function Get-TiaSheetBlockNumber {
     <#
     .SYNOPSIS
-        Deterministic block number for a zone+layer.
+        Deterministic block number for an area+layer.
     .DESCRIPTION
         32_Blocks.Number wins when the sheet pins one. Otherwise it is derived from
         10_Project BlockNumberBase/Step so numbers are stable across rebuilds - block
-        numbers matter in a safety project and must not shuffle when a zone is added.
+        numbers matter in a safety project and must not shuffle when an area is added.
     #>
-    param($Model, [string]$Zone, [string]$Layer)
-    $row = @($Model.Blocks | Where-Object { $_.Zone -eq $Zone -and $_.Layer -eq $Layer }) | Select-Object -First 1
+    param($Model, [string]$Area, [string]$Layer)
+    $row = @($Model.Blocks | Where-Object { $_.Area -eq $Area -and $_.Layer -eq $Layer }) | Select-Object -First 1
     if ($row -and $row.Number) { return [int]$row.Number }
     $base = 500; $step = 10
     if ($Model.Project['BlockNumberBase']) { $base = [int]$Model.Project['BlockNumberBase'] }
     if ($Model.Project['BlockNumberStep']) { $step = [int]$Model.Project['BlockNumberStep'] }
-    $zones = @($Model.Stations | ForEach-Object { $_.Zone })
-    $i = [array]::IndexOf($zones, $Zone)
-    if ($i -lt 0) { throw "Zone '$Zone' is not in 20_Stations." }
+    $areas = @($Model.Stations | ForEach-Object { $_.Area })
+    $i = [array]::IndexOf($areas, $Area)
+    if ($i -lt 0) { throw "Area '$Area' is not in 20_Stations." }
     $offset = @{ 'Data' = 0; 'IOMap' = 1; 'Certified' = 2; 'Safety' = 3 }[$Layer]
     if ($null -eq $offset) { $offset = 4 }
     $base + ($i * $step) + $offset
@@ -95,10 +95,10 @@ function Get-TiaSheetChannelPlan {
                "assigned by TIA and read back; they are never authored in the sheet.")
     }
     $addr = @{}
-    foreach ($r in (Import-Csv $AddressMapPath)) { $addr["$($r.Zone)/$($r.Module)"] = $r }
+    foreach ($r in (Import-Csv $AddressMapPath)) { $addr["$($r.Area)/$($r.Module)"] = $r }
 
     $tagPattern = $Model.Project['TagPattern']
-    if (-not $tagPattern) { $tagPattern = 'PPS_{Zone}_{DeviceRef}_{Component}_{Signal}' }
+    if (-not $tagPattern) { $tagPattern = 'PPS_{Area}_{DeviceRef}_{Component}_{Signal}' }
 
     # The Component level exists in the DB path ONLY when the device's UDT actually nests
     # it (UDT_SCB has EMO/KeySwitch members; a plain UDT_SafeInput has ChA/ChB directly).
@@ -114,7 +114,7 @@ function Get-TiaSheetChannelPlan {
         if ($c.Signal -eq 'Diag') { continue }
         $d = $Model.DeviceById[$c.DeviceID]
         if (-not $d) { $problems += "23_Channels $($c.ChannelID): unknown DeviceID"; continue }
-        $key = "$($d.Zone)/$($c.ModuleName)"
+        $key = "$($d.Area)/$($c.ModuleName)"
         if (-not $addr.ContainsKey($key)) { $problems += "23_Channels $($c.ChannelID): module $key not in the address map"; continue }
         $base = $addr[$key].InputBase
         if ([string]::IsNullOrWhiteSpace($base)) { $problems += "23_Channels $($c.ChannelID): module $key has no input address"; continue }
@@ -129,13 +129,14 @@ function Get-TiaSheetChannelPlan {
         $comp = if ($nests) { $c.Component } else { '' }
         $plan += [pscustomobject]@{
             ChannelID = $c.ChannelID
-            Zone      = $d.Zone
+            Area      = $d.Area
             TagName   = (Expand-TiaSheetPattern -Pattern $tagPattern -Values @{
-                            Zone = $d.Zone; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal })
+                            Area = $d.Area; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal })
             Address   = "%I$([int]$base).$bit"
             Member    = (@($d.DeviceRef, $comp, $c.Signal) | Where-Object { $_ }) -join '.'
-            Db        = (Expand-TiaSheetPattern -Pattern $(if ($Model.Project['DbPattern']) { $Model.Project['DbPattern'] } else { 'DB_{Zone}' }) -Values @{ Zone = $d.Zone })
-            Polarity  = $c.Polarity
+            Db        = (Expand-TiaSheetPattern -Pattern $(if ($Model.Project['DbPattern']) { $Model.Project['DbPattern'] } else { 'DB_{Area}' }) -Values @{ Area = $d.Area })
+            Invert    = $(if ($c.Invert -eq 'Yes') { 'Yes' } else { 'No' })
+            Verified  = $c.Verified
             Paired    = $c.Paired
             Component = $c.Component
             DeviceID  = $c.DeviceID
@@ -202,7 +203,7 @@ function Invoke-TiaSheetTagPhase {
     if (-not $ReportDir) { $ReportDir = Join-Path (Split-Path -Parent $ProjectPath) 'reports' }
     if (-not (Test-Path $ReportDir)) { New-Item -ItemType Directory -Force $ReportDir | Out-Null }
     $rp = Join-Path $ReportDir '91_TagList.csv'
-    $plan | Select-Object Zone, ChannelID, TagName, Address, Db, Member, Polarity |
+    $plan | Select-Object Area, ChannelID, TagName, Address, Db, Member, Invert |
         Export-Csv -Path $rp -NoTypeInformation -Encoding ASCII
     Write-Host ("tag list -> {0}" -f $rp)
 
@@ -216,60 +217,60 @@ function Invoke-TiaSheetTagPhase {
 function Invoke-TiaSheetIOMapPhase {
     <#
     .SYNOPSIS
-        Phase 5 (IOMap): FB_<zone>_IOMap copying each channel tag into its DB member.
+        Phase 5 (IOMap): FB_<area>_IOMap copying each channel tag into its DB member.
     .DESCRIPTION
-        In  : 23_Channels (Polarity, Paired), 22_Devices, reports/90_AddressMap.csv
-        Out : FB_<zone>_IOMap (F_LAD), one network per device/component
-        Polarity=NO emits a NEGATED contact. The rung compiles either way, so a wrong or
-        guessed polarity is invisible to the compiler and inverts a trip in the plant -
-        which is why a blank is an error unless -AssumeDefaultPolarity is given explicitly.
+        In  : 23_Channels (Invert, Paired), 22_Devices, reports/90_AddressMap.csv
+        Out : FB_<area>_IOMap (F_LAD), one network per device/component
+
+        SIGNAL SENSE. The project convention is fail-safe: at the PLC input 1 = OK and
+        0 = fault, so a channel maps straight through and everything downstream reads
+        "1 = safe". Invert=Yes marks a device wired against that convention and emits a
+        NEGATED contact.
+
+        The rung compiles either way, so a wrong sense is invisible to the compiler and
+        inverts a trip in the plant. Nothing here can detect that - only 23_Channels.Verified
+        records that a person checked the drawing.
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
-          [switch]$AssumeDefaultPolarity, [switch]$Save)
+          [switch]$Save)
 
     $plan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
-    $default = $Model.Project['DefaultPolarity']
-    if (-not $default) { $default = 'NC' }
 
-    $assumed = @($plan | Where-Object { -not $_.Polarity })
-    if ($assumed.Count) {
-        if (-not $AssumeDefaultPolarity) {
-            throw ("$($assumed.Count) channel(s) have no Polarity. It is a wiring-drawing fact and " +
-                   "is never defaulted silently - a wrong polarity inverts a trip. Fill 23_Channels, " +
-                   "or pass -AssumeDefaultPolarity to build a PROVISIONAL, NON-RELEASABLE program " +
-                   "using DefaultPolarity=$default.")
-        }
-        Write-Host ("  WARNING: assuming DefaultPolarity=$default on $($assumed.Count) channel(s)." ) -ForegroundColor Yellow
-        Write-Host  "  This program is PROVISIONAL and must not be released until 23_Channels.Polarity" -ForegroundColor Yellow
-        Write-Host  "  is confirmed against the wiring drawings." -ForegroundColor Yellow
-        foreach ($p in $assumed) { $p.Polarity = $default }
+    $inverted = @($plan | Where-Object { $_.Invert -eq 'Yes' })
+    Write-Host ("  signal sense: {0} fail-safe (direct), {1} inverted" -f
+                ($plan.Count - $inverted.Count), $inverted.Count)
+    foreach ($p in $inverted) { Write-Host ("    invert  {0}" -f $p.ChannelID) -ForegroundColor Yellow }
+    $unverified = @($plan | Where-Object { $_.Verified -ne 'Yes' })
+    if ($unverified.Count) {
+        Write-Host ("  WARNING: {0} of {1} channel(s) are Verified<>Yes - their fail-safe sense is" -f $unverified.Count, $plan.Count) -ForegroundColor Yellow
+        Write-Host  "  unconfirmed against the wiring drawings. This program is PROVISIONAL." -ForegroundColor Yellow
     }
 
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
 
     $built = @(); $nets = 0
     foreach ($z in $Model.Stations) {
-        $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
+        $rows = @($plan | Where-Object { $_.Area -eq $z.Area })
         if (-not $rows.Count) { continue }
         $units = @(); $id = 3
         foreach ($g in ($rows | Group-Object DeviceID, Component)) {
             $b = New-TiaFlgBuilder
             foreach ($r in ($g.Group | Sort-Object Signal)) {
-                # Polarity NO => the field contact is closed on demand, so invert it here
-                # and everything downstream reads "1 = safe".
+                # Invert=Yes => the field device is wired against the fail-safe convention,
+                # so negate here and everything downstream still reads "1 = safe".
                 Add-TiaFlgRung -Builder $b -From $r.TagName -To "$($r.Db).$($r.Member)" `
-                               -Negated:($r.Polarity -eq 'NO') | Out-Null
+                               -Negated:($r.Invert -eq 'Yes') | Out-Null
             }
             $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title ($g.Group[0].Member -split '\.')[0])
             $id += 5
             $nets++
         }
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'IOMap' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'IOMap'
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'IOMap' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'IOMap'
         $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
         Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num; Networks = $units.Count }
+        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num; Networks = $units.Count }
     }
     Write-Host ("iomap: {0} block(s), {1} network(s), {2} rung(s)" -f $built.Count, $nets, $plan.Count)
 
@@ -292,8 +293,9 @@ function Invoke-TiaSheetIOMapPhase {
     [pscustomobject]@{
         Ok = ($cErr -eq 0); Phase = 'IOMap'; ProjectPath = $ProjectPath
         Blocks = @($built | ForEach-Object { $_.Name }); Networks = $nets; Rungs = $plan.Count
-        AssumedPolarity = $assumed.Count
-        Provisional = [bool]$assumed.Count
+        Inverted = $inverted.Count
+        Unverified = $unverified.Count
+        Provisional = [bool]$unverified.Count
         CompileState = [string]$compile.State; CompileErrors = $cErr
     }
 }
@@ -350,16 +352,16 @@ function Get-TiaSheetCertifiedPlan {
             }
             $inst = if ($r.InstanceName) { $r.InstanceName } else {
                 Expand-TiaSheetPattern -Pattern $instPattern -Values @{
-                    Zone = $d.Zone; DeviceRef = $d.DeviceRef; Component = $comp; Instruction = $r.Instruction } }
+                    Area = $d.Area; DeviceRef = $d.DeviceRef; Component = $comp; Instruction = $r.Instruction } }
             $plan += [pscustomobject]@{
-                Zone = $d.Zone; DeviceID = $did; DeviceRef = $d.DeviceRef; Component = $comp
+                Area = $d.Area; DeviceID = $did; DeviceRef = $d.DeviceRef; Component = $comp
                 Instruction = $r.Instruction; Version = $r.Version; Instance = $inst
                 Order = [int]$r.Order
                 ChA = $(if ($chA) { "$($rows[0].Db).$($chA.Member)" }); ChB = $(if ($chB) { "$($rows[0].Db).$($chB.Member)" })
                 Stem = $dbStem
-                AckSource = $(if ($r.AckSource) { Expand-TiaSheetPattern -Pattern $r.AckSource -Values @{ Db = $rows[0].Db; Zone = $d.Zone } })
+                AckSource = $(if ($r.AckSource) { Expand-TiaSheetPattern -Pattern $r.AckSource -Values @{ Db = $rows[0].Db; Area = $d.Area } })
                 QTarget = $(if ($r.QTarget) { Expand-TiaSheetPattern -Pattern $r.QTarget -Values @{
-                                Db = $rows[0].Db; Device = $d.DeviceRef; Component = $comp; Zone = $d.Zone } })
+                                Db = $rows[0].Db; Device = $d.DeviceRef; Component = $comp; Area = $d.Area } })
             }
         }
     }
@@ -376,21 +378,21 @@ function Invoke-TiaSheetCertifiedPhase {
         Phase 6 (Certified): ESTOP1 / SFDOOR / EV1oo2DI per 31_Policy.
     .DESCRIPTION
         In  : 31_Policy, 33_SafetyBlocks (overrides), 22_Devices, 23_Channels
-        Out : FB_<zone>_Certified (F_LAD) with the instructions as multi-instance statics
+        Out : FB_<area>_Certified (F_LAD) with the instructions as multi-instance statics
         DISCTIME/TIME_DEL pins are left OPEN - the FlgNet importer rejects Time literals,
         so those safety parameters are set in TIA.
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
-          [switch]$AssumeDefaultPolarity, [switch]$Save)
+          [switch]$Save)
 
     $chan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
     $plan = Get-TiaSheetCertifiedPlan -Model $Model -ChannelPlan $chan
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
 
     $built = @()
     foreach ($z in $Model.Stations) {
-        $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
+        $rows = @($plan | Where-Object { $_.Area -eq $z.Area })
         if (-not $rows.Count) { continue }
         $units = @(); $statics = @(); $id = 3
         foreach ($g in ($rows | Group-Object DeviceID, Component)) {
@@ -420,11 +422,11 @@ function Invoke-TiaSheetCertifiedPhase {
             $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($g.Group[0].DeviceRef).$($g.Group[0].Component)")
             $id += 5
         }
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'Certified' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Certified'
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'Certified' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Certified'
         $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units -Statics $statics
         Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num; Networks = $units.Count; Instances = $statics.Count }
+        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num; Networks = $units.Count; Instances = $statics.Count }
     }
     Write-Host ("certified: {0} block(s), {1} instruction call(s)" -f $built.Count, $plan.Count)
 
@@ -454,18 +456,18 @@ function Invoke-TiaSheetCertifiedPhase {
 function Invoke-TiaSheetSafetyPhase {
     <#
     .SYNOPSIS
-        Phase 7 (Safety): zone interlocks + the safety runtime that calls every zone block.
+        Phase 7 (Safety): area interlocks + the safety runtime that calls every area block.
     .DESCRIPTION
         In  : 34_Interlocks (Target, DeviceID, Member, Include), 22_Devices, 31_Policy
-        Out : FB_<zone>_Safety (device summaries + the zone AND), and the safety runtime FB
-              calling IOMap -> Certified -> Safety per zone, in that order.
+        Out : FB_<area>_Safety (device summaries + the area AND), and the safety runtime FB
+              calling IOMap -> Certified -> Safety per area, in that order.
 
         Device_Safe is COMPUTED here from each component's terminal certified output. It is
         not written anywhere else, so an interlock ANDing it directly would AND a member
         nothing ever sets - permanently false, which looks safe and is silently broken.
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
-          [switch]$AssumeDefaultPolarity, [switch]$Save)
+          [switch]$Save)
 
     $chan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
     $cert = Get-TiaSheetCertifiedPlan -Model $Model -ChannelPlan $chan
@@ -480,18 +482,18 @@ function Invoke-TiaSheetSafetyPhase {
     }
 
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
     $dbPattern = $Model.Project['DbPattern']
-    if (-not $dbPattern) { $dbPattern = 'DB_{Zone}' }
+    if (-not $dbPattern) { $dbPattern = 'DB_{Area}' }
 
-    $built = @(); $skippedZones = @()
+    $built = @(); $skippedAreas = @()
     foreach ($z in $Model.Stations) {
-        $db = Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Zone = $z.Zone }
+        $db = Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Area = $z.Area }
         $units = @(); $id = 3
 
         # one network per device: AND its components' terminal results into Device_Safe
-        $zoneDevs = @()
-        foreach ($d in @($Model.DevicesByZone[$z.Zone] | Sort-Object DeviceRef)) {
+        $areaDevs = @()
+        foreach ($d in @($Model.DevicesByArea[$z.Area] | Sort-Object DeviceRef)) {
             $comps = @($terminal.Keys | Where-Object { $_ -like "$($d.DeviceID)|*" })
             if (-not $comps.Count) { continue }
             $srcs = @($comps | Sort-Object | ForEach-Object { $terminal[$_] })
@@ -499,44 +501,44 @@ function Invoke-TiaSheetSafetyPhase {
             Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.DeviceRef).Device_Safe") | Out-Null
             $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($d.DeviceRef) Device_Safe")
             $id += 5
-            $zoneDevs += $d
+            $areaDevs += $d
         }
 
-        # the zone AND - only devices 34_Interlocks includes
-        $inc = @($Model.Interlocks | Where-Object { $_.Zone -eq $z.Zone -and $_.Include -eq 'Yes' })
+        # the area AND - only devices 34_Interlocks includes
+        $inc = @($Model.Interlocks | Where-Object { $_.Area -eq $z.Area -and $_.Include -eq 'Yes' })
         $members = @()
         foreach ($i in $inc) {
             $d = $Model.DeviceById[$i.DeviceID]
             if (-not $d) { continue }
-            if ($zoneDevs -notcontains $d) { continue }   # no certified result to contribute
+            if ($areaDevs -notcontains $d) { continue }   # no certified result to contribute
             $members += "$db.$($d.DeviceRef).Device_Safe"
         }
-        if (-not $members.Count) { $skippedZones += $z.Zone; continue }
+        if (-not $members.Count) { $skippedAreas += $z.Area; continue }
         $b = New-TiaFlgBuilder
-        Add-TiaFlgSeriesRung -Builder $b -From $members -To @("$db.Interlocks_OK", "$db.Zone_Safe") | Out-Null
-        $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Zone) Interlocks_OK")
+        Add-TiaFlgSeriesRung -Builder $b -From $members -To @("$db.Interlocks_OK", "$db.Area_Safe") | Out-Null
+        $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) Interlocks_OK")
 
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'Safety' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Safety'
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'Safety' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Safety'
         $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
         Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num
-                                     Devices = $zoneDevs.Count; Contributors = $members.Count }
+        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num
+                                     Devices = $areaDevs.Count; Contributors = $members.Count }
     }
 
-    # the safety runtime: one network per zone calling IOMap -> Certified -> Safety
+    # the safety runtime: one network per area calling IOMap -> Certified -> Safety
     $rtName = $Model.Project['SafetyRuntimeFB']
     if (-not $rtName) { $rtName = 'Main_Safety_RTG1' }
     $rtUnits = @(); $rtStatics = @(); $rid = 3
     foreach ($b in $built) {
         $bu = New-TiaFlgBuilder
         foreach ($layer in @('IOMap','Certified','Safety')) {
-            $blk = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $b.Zone; Layer = $layer }
+            $blk = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $b.Area; Layer = $layer }
             $inst = "${blk}_Instance"
             $rtStatics += [pscustomobject]@{ Name = $inst; Datatype = $blk; Block = $true }
             Add-TiaFlgCall -Builder $bu -Block $blk -InstanceName $inst | Out-Null
         }
-        $rtUnits += (New-TiaFlgCompileUnit -Builder $bu -Id $rid -Title "$($b.Zone)")
+        $rtUnits += (New-TiaFlgCompileUnit -Builder $bu -Id $rid -Title "$($b.Area)")
         $rid += 5
     }
     $rtNum = 1
@@ -545,10 +547,10 @@ function Invoke-TiaSheetSafetyPhase {
     $rtXml = New-TiaFailsafeFbXml -Name $rtName -Number $rtNum -CompileUnits $rtUnits -Statics $rtStatics
     Save-TiaMlDocument -Path (Join-Path $XmlDir "$rtName.xml") -Xml $rtXml | Out-Null
 
-    Write-Host ("safety: {0} zone block(s), runtime '{1}' calling {2} block(s)" -f
+    Write-Host ("safety: {0} area block(s), runtime '{1}' calling {2} block(s)" -f
                 $built.Count, $rtName, $rtStatics.Count)
-    if ($skippedZones.Count) {
-        Write-Host ("  zones with no interlock contributors: {0}" -f ($skippedZones -join ', ')) -ForegroundColor Yellow
+    if ($skippedAreas.Count) {
+        Write-Host ("  areas with no interlock contributors: {0}" -f ($skippedAreas -join ', ')) -ForegroundColor Yellow
     }
 
     $cErr = 0; $compile = $null
@@ -582,23 +584,23 @@ function Invoke-TiaSheetSafetyPhase {
 function Invoke-TiaSheetDataPhase {
     <#
     .SYNOPSIS
-        Phase 3 (Data): one formal F-DB per zone, one member per device.
+        Phase 3 (Data): one formal F-DB per area, one member per device.
     .DESCRIPTION
-        In  : 22_Devices (DeviceID, Zone, DeviceRef, UDT), 30_UDTs, 32_Blocks
-        Out : DB_<zone> as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB
+        In  : 22_Devices (DeviceID, Area, DeviceRef, UDT), 30_UDTs, 32_Blocks
+        Out : DB_<area> as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB
         Emitted as XML because ProgrammingLanguage=F_DB cannot be set from SCL - an
         SCL-created DB is an ordinary DB and the safety program will not accept it.
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [switch]$Save)
 
     $dbPattern = $Model.Project['DbPattern']
-    if (-not $dbPattern) { $dbPattern = 'DB_{Zone}' }
+    if (-not $dbPattern) { $dbPattern = 'DB_{Area}' }
     $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
 
     $plan = @()
     foreach ($z in $Model.Stations) {
-        $devs = @($Model.DevicesByZone[$z.Zone])
-        if (-not $devs.Count) { Write-Host "  $($z.Zone): no devices - skipped"; continue }
+        $devs = @($Model.DevicesByArea[$z.Area])
+        if (-not $devs.Count) { Write-Host "  $($z.Area): no devices - skipped"; continue }
         $members = @()
         $seen = @{}
         foreach ($d in ($devs | Sort-Object DeviceRef)) {
@@ -606,27 +608,27 @@ function Invoke-TiaSheetDataPhase {
             if ($udtNames -notcontains $d.UDT) { throw "22_Devices $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
             $nm = $d.DeviceRef
             if ($seen.ContainsKey($nm)) {
-                throw ("22_Devices: zone $($z.Zone) has two devices with DeviceRef '$nm' " +
+                throw ("22_Devices: area $($z.Area) has two devices with DeviceRef '$nm' " +
                        "($($seen[$nm]) and $($d.DeviceID)) - they would collide as DB members")
             }
             $seen[$nm] = $d.DeviceID
             $members += [pscustomobject]@{ Name = $nm; Datatype = $d.UDT; Comment = $d.Description }
         }
-        # Zone-level members. The certified calls acknowledge against Zone_Reset and the
-        # safety layer writes Interlocks_OK / Zone_Safe, so without these every ACK pin
-        # compiles to "Tag DB_<zone>.Zone_Reset not defined".
+        # Area-level members. The certified calls acknowledge against Area_Reset and the
+        # safety layer writes Interlocks_OK / Area_Safe, so without these every ACK pin
+        # compiles to "Tag DB_<area>.Area_Reset not defined".
         foreach ($zm in @(
-            @{ n = 'Zone_Reset';    c = 'zone acknowledge / reset (supervised source)' },
+            @{ n = 'Area_Reset';    c = 'area acknowledge / reset (supervised source)' },
             @{ n = 'Interlocks_OK'; c = 'all interlock contributors safe' },
-            @{ n = 'Zone_Safe';     c = 'zone safe summary' })) {
+            @{ n = 'Area_Safe';     c = 'area safe summary' })) {
             if (-not $seen.ContainsKey($zm.n)) {
                 $members += [pscustomobject]@{ Name = $zm.n; Datatype = 'Bool'; Comment = $zm.c }
             }
         }
         $plan += [pscustomobject]@{
-            Zone = $z.Zone
-            Name = (Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Zone = $z.Zone })
-            Number = (Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Data')
+            Area = $z.Area
+            Name = (Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Area = $z.Area })
+            Number = (Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Data')
             Members = $members
         }
     }
