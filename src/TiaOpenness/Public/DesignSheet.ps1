@@ -34,6 +34,16 @@ $script:TiaSheetEnums = @{
 }
 $script:TiaSheetVerifiedCols = @('20_Zones','21_Modules','22_Devices','23_Channels','33_SafetyBlocks')
 
+# Headers for every known tab, including the optional/governance ones. Used to preserve a
+# tab's header when it legitimately has zero data rows (the xlsx reader consumes row 1 as
+# the header, so an empty tab would otherwise lose its schema on sync).
+$script:TiaSheetKnownHeaders = [ordered]@{
+    '01_Revisions' = @('Rev','Date','Author','Summary','Approver','SnapshotCommit')
+    '02_Decisions' = @('DecID','Topic','Question','Decision','Rationale','Status','Owner','Date')
+    '35_Outputs'   = @('OutputID','Zone','DeviceID','Signal','Slot','Channel','DrivenBy','FDBACK')
+}
+foreach ($k in $script:TiaSheetSchema.Keys) { $script:TiaSheetKnownHeaders[$k] = $script:TiaSheetSchema[$k] }
+
 function Sync-TiaDesignSheet {
     <#
     .SYNOPSIS
@@ -59,6 +69,9 @@ function Sync-TiaDesignSheet {
         [switch]$DiffOnly,
         [string]$ApiKey
     )
+    # .NET file APIs use the PROCESS working directory, which Set-Location does not
+    # change - resolve to an absolute path up front or writes land in the wrong root.
+    $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     $cfgPath = Join-Path $Path 'sheet.json'
     if (-not (Test-Path $cfgPath)) { throw "No sheet.json at $cfgPath (see engine docs/DESIGN-SHEET.md)." }
     $cfg = Get-Content -Raw $cfgPath | ConvertFrom-Json
@@ -109,7 +122,9 @@ function Sync-TiaDesignSheet {
                 continue
             }
             $rows = @(Import-TiaXlsx -Path $book -Sheet $name)
-            $cols = if ($rows.Count) { $rows[0].PSObject.Properties.Name } else { @() }
+            $cols = if ($rows.Count) { $rows[0].PSObject.Properties.Name }
+                    elseif ($script:TiaSheetKnownHeaders.Contains($name)) { $script:TiaSheetKnownHeaders[$name] }
+                    else { @() }
             $vals = @(, $cols)
             foreach ($r in $rows) { $vals += , @($cols | ForEach-Object { [string]$r.$_ }) }
             $text = (ConvertTo-TiaCsvText -Values $vals)
@@ -118,7 +133,8 @@ function Sync-TiaDesignSheet {
             $old = if (Test-Path $target) { ((Get-Content -Raw $target) -replace "`r`n","`n").TrimEnd("`n") } else { $null }
             if ($old -ne $text) { $changed += $name } else { $same += $name }
             if (-not $DiffOnly) {
-                [System.IO.File]::WriteAllText($target, $text + "`n", (New-Object System.Text.UTF8Encoding($false)))
+                try { [System.IO.File]::WriteAllText($target, $text + "`n", (New-Object System.Text.UTF8Encoding($false))) }
+                catch { throw "Failed writing snapshot '$target': $($_.Exception.Message)" }
             }
             $sha = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($text)))).Hash
             $state[$name] = [ordered]@{ rows = $rows.Count; sha256 = $sha }
