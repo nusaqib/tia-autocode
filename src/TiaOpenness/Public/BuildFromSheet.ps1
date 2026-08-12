@@ -51,7 +51,7 @@ function Invoke-TiaBuildFromSheet {
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not (Test-Path $Path)) { throw "No design snapshot at $Path" }
 
-    if (@('Hardware','Types','Data','Tags','IOMap') -notcontains $Phase) {
+    if (@('Hardware','Types','Data','Tags','IOMap','Certified') -notcontains $Phase) {
         throw ("Phase '$Phase' is not implemented yet. Its input/output contract is defined in " +
                "the project's docs/BUILD.md.")
     }
@@ -129,6 +129,11 @@ function Invoke-TiaBuildFromSheet {
         switch ($Phase) {
             'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
             'Data'  { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
+            'Certified' {
+                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
+                $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
+                return Invoke-TiaSheetCertifiedPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -AssumeDefaultPolarity:$AssumeDefaultPolarity -Save:$Save
+            }
             'IOMap' {
                 $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
                 $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'

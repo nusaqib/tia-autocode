@@ -28,7 +28,18 @@ function Open-TiaSheetProject {
                "additive and build into the same project).")
     }
     Connect-TiaPortal -New -WithUserInterface:$false | Out-Null
-    Open-TiaProject -ProjectFile $file | Out-Null
+    # TIA holds the project lock for a short while after the previous Portal process exits
+    # ("...can only be opened again after a 2 minute delay"), so running phases
+    # back-to-back would otherwise fail on a race rather than a real problem.
+    $deadline = (Get-Date).AddSeconds(150)
+    while ($true) {
+        try { Open-TiaProject -ProjectFile $file | Out-Null; break }
+        catch {
+            if ($_.Exception.Message -notmatch 'already been opened|cannot be accessed' -or (Get-Date) -gt $deadline) { throw }
+            Write-Host '  project still locked by the previous phase - retrying...' -ForegroundColor DarkGray
+            Start-Sleep -Seconds 10
+        }
+    }
     $file
 }
 
@@ -287,6 +298,159 @@ function Invoke-TiaSheetIOMapPhase {
     }
 }
 
+function Get-TiaSheetCertifiedPlan {
+    <#
+    .SYNOPSIS
+        Expand 31_Policy over the devices, honouring 33_SafetyBlocks overrides.
+    #>
+    param($Model, $ChannelPlan)
+
+    $policy = @{}
+    foreach ($r in $Model.SafetyBlocks) {
+        # a per-device override replaces the whole policy chain for that device+component
+        $k = "$($r.DeviceID)|$($r.Component)"
+        if (-not $policy.ContainsKey($k)) { $policy[$k] = @() }
+        $policy[$k] += $r
+    }
+    $byType = @{}
+    foreach ($r in $Model.Policy) {
+        $k = "$($r.DeviceType)|$($r.Component)"
+        if (-not $byType.ContainsKey($k)) { $byType[$k] = @() }
+        $byType[$k] += $r
+    }
+
+    $groups = @{}
+    foreach ($c in $ChannelPlan) {
+        $k = "$($c.DeviceID)|$($c.Component)"
+        if (-not $groups.ContainsKey($k)) { $groups[$k] = @() }
+        $groups[$k] += $c
+    }
+
+    $instPattern = $Model.Project['InstancePattern']
+    if (-not $instPattern) { $instPattern = 'Inst_{DeviceRef}_{Component}_{Instruction}' }
+
+    $plan = @(); $missing = @()
+    foreach ($k in ($groups.Keys | Sort-Object)) {
+        $rows = $groups[$k]
+        $did, $comp = $k -split '\|', 2
+        $d = $Model.DeviceById[$did]
+        $rules = if ($policy.ContainsKey($k)) { $policy[$k] } else { $byType["$($d.DeviceType)|$comp"] }
+        if (-not $rules) { $missing += "no 31_Policy rule for DeviceType '$($d.DeviceType)' component '$comp' (e.g. $did)"; continue }
+
+        $chA = @($rows | Where-Object { $_.Signal -eq 'ChA' -or $_.Member -like '*.ChA' }) | Select-Object -First 1
+        $chB = @($rows | Where-Object { $_.Member -like '*.ChB' }) | Select-Object -First 1
+        if (-not $chA) { $chA = $rows[0] }
+        $base = ($rows[0].Member -split '\.'); $stem = if ($base.Count -gt 1) { ($base[0..($base.Count-2)] -join '.') } else { $base[0] }
+        $dbStem = "$($rows[0].Db).$stem"
+
+        foreach ($r in ($rules | Sort-Object { [int]$_.Order })) {
+            if ($r.Instruction -eq 'EV1oo2DI' -and -not $chB) {
+                $missing += "$did.$comp is single-channel but policy applies EV1oo2DI (needs ChA and ChB)"
+                continue
+            }
+            $inst = if ($r.InstanceName) { $r.InstanceName } else {
+                Expand-TiaSheetPattern -Pattern $instPattern -Values @{
+                    Zone = $d.Zone; DeviceRef = $d.DeviceRef; Component = $comp; Instruction = $r.Instruction } }
+            $plan += [pscustomobject]@{
+                Zone = $d.Zone; DeviceID = $did; DeviceRef = $d.DeviceRef; Component = $comp
+                Instruction = $r.Instruction; Version = $r.Version; Instance = $inst
+                Order = [int]$r.Order
+                ChA = $(if ($chA) { "$($rows[0].Db).$($chA.Member)" }); ChB = $(if ($chB) { "$($rows[0].Db).$($chB.Member)" })
+                Stem = $dbStem
+                AckSource = $(if ($r.AckSource) { Expand-TiaSheetPattern -Pattern $r.AckSource -Values @{ Db = $rows[0].Db; Zone = $d.Zone } })
+                QTarget = $(if ($r.QTarget) { Expand-TiaSheetPattern -Pattern $r.QTarget -Values @{
+                                Db = $rows[0].Db; Device = $d.DeviceRef; Component = $comp; Zone = $d.Zone } })
+            }
+        }
+    }
+    if ($missing.Count) {
+        foreach ($m in $missing) { Write-Host "  $m" -ForegroundColor Red }
+        throw "Certified plan has $($missing.Count) unresolved device(s)."
+    }
+    $plan
+}
+
+function Invoke-TiaSheetCertifiedPhase {
+    <#
+    .SYNOPSIS
+        Phase 6 (Certified): ESTOP1 / SFDOOR / EV1oo2DI per 31_Policy.
+    .DESCRIPTION
+        In  : 31_Policy, 33_SafetyBlocks (overrides), 22_Devices, 23_Channels
+        Out : FB_<zone>_Certified (F_LAD) with the instructions as multi-instance statics
+        DISCTIME/TIME_DEL pins are left OPEN - the FlgNet importer rejects Time literals,
+        so those safety parameters are set in TIA.
+    #>
+    param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
+          [switch]$AssumeDefaultPolarity, [switch]$Save)
+
+    $chan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
+    $plan = Get-TiaSheetCertifiedPlan -Model $Model -ChannelPlan $chan
+    $fbPattern = $Model.Project['BlockPattern']
+    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+
+    $built = @()
+    foreach ($z in $Model.Zones) {
+        $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
+        if (-not $rows.Count) { continue }
+        $units = @(); $statics = @(); $id = 3
+        foreach ($g in ($rows | Group-Object DeviceID, Component)) {
+            $b = New-TiaFlgBuilder
+            $prev1oo2 = $false
+            foreach ($r in ($g.Group | Sort-Object Order)) {
+                $statics += [pscustomobject]@{ Name = $r.Instance; Datatype = $r.Instruction }
+                # Operand paths are derived from the channel plan's member stem, never from
+                # a pattern: only the stem knows whether this device's UDT nests a Component
+                # level, and a pattern that always inserts one yields "Tag not defined".
+                $in = @{}; $out = @{}
+                switch ($r.Instruction) {
+                    'EV1oo2DI' { $in['IN1'] = $r.ChA; $in['IN2'] = $r.ChB; $in['ACK'] = $r.AckSource
+                                 $out['Q'] = "$($r.Stem).1oo2_OK" }
+                    'SFDOOR'   { $in['IN1'] = $r.ChA; $in['IN2'] = $r.ChB; $in['ACK'] = $r.AckSource
+                                 $out['Q'] = "$($r.Stem).Safe" }
+                    # ESTOP1 follows the 1oo2 evaluator when policy chains them (D04), so it
+                    # consumes the evaluated result rather than a raw channel.
+                    'ESTOP1'   { $in['E_STOP'] = $(if ($prev1oo2) { "$($r.Stem).1oo2_OK" } else { $r.ChA })
+                                 $in['ACK'] = $r.AckSource
+                                 $out['Q'] = "$($r.Stem).Safe" }
+                }
+                $prev1oo2 = ($r.Instruction -eq 'EV1oo2DI')
+                Add-TiaFlgCertifiedCall -Builder $b -Instruction $r.Instruction -InstanceName $r.Instance `
+                                        -Inputs $in -Outputs $out -Version $r.Version | Out-Null
+            }
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($g.Group[0].DeviceRef).$($g.Group[0].Component)")
+            $id += 5
+        }
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'Certified' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Certified'
+        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units -Statics $statics
+        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num; Networks = $units.Count; Instances = $statics.Count }
+    }
+    Write-Host ("certified: {0} block(s), {1} instruction call(s)" -f $built.Count, $plan.Count)
+
+    $cErr = 0; $compile = $null
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
+        foreach ($b in $built) {
+            Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
+            Write-Host ("  {0,-22} FB{1,-4} {2,2} networks {3,3} instances" -f $b.Name, $b.Number, $b.Networks, $b.Instances)
+        }
+        $plc = Get-TiaPlc | Select-Object -First 1
+        $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+        try { $cErr = $compile.Errors } catch { }
+        Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+        if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
+
+    [pscustomobject]@{
+        Ok = ($cErr -eq 0); Phase = 'Certified'; ProjectPath = $ProjectPath
+        Blocks = @($built | ForEach-Object { $_.Name }); Calls = $plan.Count
+        CompileState = [string]$compile.State; CompileErrors = $cErr
+    }
+}
+
 function Invoke-TiaSheetDataPhase {
     <#
     .SYNOPSIS
@@ -319,6 +483,17 @@ function Invoke-TiaSheetDataPhase {
             }
             $seen[$nm] = $d.DeviceID
             $members += [pscustomobject]@{ Name = $nm; Datatype = $d.UDT; Comment = $d.Description }
+        }
+        # Zone-level members. The certified calls acknowledge against Zone_Reset and the
+        # safety layer writes Interlocks_OK / Zone_Safe, so without these every ACK pin
+        # compiles to "Tag DB_<zone>.Zone_Reset not defined".
+        foreach ($zm in @(
+            @{ n = 'Zone_Reset';    c = 'zone acknowledge / reset (supervised source)' },
+            @{ n = 'Interlocks_OK'; c = 'all interlock contributors safe' },
+            @{ n = 'Zone_Safe';     c = 'zone safe summary' })) {
+            if (-not $seen.ContainsKey($zm.n)) {
+                $members += [pscustomobject]@{ Name = $zm.n; Datatype = 'Bool'; Comment = $zm.c }
+            }
         }
         $plan += [pscustomobject]@{
             Zone = $z.Zone

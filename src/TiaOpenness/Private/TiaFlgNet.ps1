@@ -129,6 +129,110 @@ function Add-TiaFlgRung {
     $coil
 }
 
+# Pin sets of the certified Siemens F-application blocks, in the order the exported
+# canonical XML wires them. EVERY pin must appear in the network: an input left out is an
+# import error, so unused ones get an OpenCon.
+# Value pins (DISCTIME/TIME_DEL) are deliberately left open - Time literals like T#0s are
+# REJECTED by the FlgNet importer, so those are set in TIA.
+$script:TiaCertifiedPins = @{
+    'EV1oo2DI' = [ordered]@{
+        In  = @('IN1','IN2','DISCTIME','ACK_NEC','ACK')
+        Out = @('Q','ACK_REQ','DISC_FLT','DIAG')
+        Template = [ordered]@{ 'f_user_card' = @('Cardinality','1'); 'f_image_card' = @('Cardinality','0')
+                               'f_imageclassic_card' = @('Cardinality','0'); 'f_imageplus_card' = @('Cardinality','0')
+                               'codedbool_type' = @('Type','DInt') }
+        Version = '1.3'
+    }
+    'ESTOP1' = [ordered]@{
+        In  = @('E_STOP','ACK_NEC','ACK','TIME_DEL')
+        Out = @('Q','Q_DELAY','ACK_REQ','DIAG')
+        Template = [ordered]@{ 'f_user_card' = @('Cardinality','1'); 'f_image_card' = @('Cardinality','0') }
+        Version = '1.6'
+    }
+    # SFDOOR also takes QBAD_IN1/QBAD_IN2 (the passivation status of each input channel).
+    # Omitting them fails the import with "The connection with the name 'QBAD_IN1' is not
+    # connected to the object with the UID ...".
+    'SFDOOR' = [ordered]@{
+        In  = @('QBAD_IN1','QBAD_IN2','IN1','IN2','OPEN_NEC','ACK_NEC','ACK')
+        Out = @('Q','ACK_REQ','DIAG')
+        Template = [ordered]@{ 'f_user_card' = @('Cardinality','1'); 'f_image_card' = @('Cardinality','0') }
+        Version = '1.3'
+    }
+}
+
+function Add-TiaFlgCertifiedCall {
+    <#
+    .SYNOPSIS
+        A certified F-application block call (ESTOP1 / SFDOOR / EV1oo2DI).
+    .DESCRIPTION
+        <Instance Scope="LocalVariable"> must be the FIRST child of the Part, before any
+        TemplateValue - not because instance binding is optional, but because SimaticML is
+        order-sensitive and reports the violation as "invalid child element".
+        Multi-instance statics mean no separate F-instance DBs are needed.
+    .PARAMETER Inputs
+        Pin -> operand symbol path. Pins omitted here are wired OpenCon.
+    .PARAMETER Outputs
+        Pin -> operand symbol path. Same rule.
+    #>
+    param([Parameter(Mandatory)]$Builder, [Parameter(Mandatory)][string]$Instruction,
+          [Parameter(Mandatory)][string]$InstanceName, [hashtable]$Inputs = @{},
+          [hashtable]$Outputs = @{}, [string]$Version)
+
+    $spec = $script:TiaCertifiedPins[$Instruction]
+    if (-not $spec) { throw "Unknown certified instruction '$Instruction'." }
+    if (-not $Version) { $Version = $spec.Version }
+
+    $Builder.Uid++
+    $partUid = $Builder.Uid
+    $Builder.Uid++
+    $instUid = $Builder.Uid
+    $tmpl = ($spec.Template.Keys | ForEach-Object {
+        $t = $spec.Template[$_]
+        "      <TemplateValue Name=""$_"" Type=""$($t[0])"">$($t[1])</TemplateValue>"
+    }) -join "`r`n"
+    $Builder.Parts.Add(@"
+    <Part Name="$Instruction" Version="$Version" UId="$partUid">
+      <Instance Scope="LocalVariable" UId="$instUid">
+        <Component Name="$(ConvertTo-TiaXmlText $InstanceName)" />
+      </Instance>
+$tmpl
+    </Part>
+"@)
+
+    $Builder.PowerrailPins.Add("${partUid}:en")
+    foreach ($pin in $spec.In) {
+        if ($Inputs.ContainsKey($pin) -and $Inputs[$pin]) {
+            $a = Add-TiaFlgAccess -Builder $Builder -Path $Inputs[$pin]
+            Add-TiaFlgWire -Builder $Builder -FromAccess $a -To @("${partUid}:$pin") | Out-Null
+        } else {
+            Add-TiaFlgOpenWire -Builder $Builder -PartUid $partUid -Pin $pin | Out-Null
+        }
+    }
+    foreach ($pin in $spec.Out) {
+        if ($Outputs.ContainsKey($pin) -and $Outputs[$pin]) {
+            $a = Add-TiaFlgAccess -Builder $Builder -Path $Outputs[$pin]
+            $Builder.Uid++
+            $Builder.Wires.Add(@"
+    <Wire UId="$($Builder.Uid)">
+      <NameCon UId="$partUid" Name="$pin" />
+      <IdentCon UId="$a" />
+    </Wire>
+"@)
+        } else {
+            $Builder.Uid++
+            $openUid = $Builder.Uid
+            $Builder.Uid++
+            $Builder.Wires.Add(@"
+    <Wire UId="$($Builder.Uid)">
+      <NameCon UId="$partUid" Name="$pin" />
+      <OpenCon UId="$openUid" />
+    </Wire>
+"@)
+        }
+    }
+    $partUid
+}
+
 function New-TiaFlgCompileUnit {
     <#
     .SYNOPSIS

@@ -42,6 +42,7 @@ function Read-TiaSheetModel {
         Devices      = T '22_Devices'
         Channels     = T '23_Channels'
         Udts         = T '30_UDTs'
+        Policy       = T '31_Policy'
         Blocks       = T '32_Blocks'
         SafetyBlocks = T '33_SafetyBlocks'
         Interlocks   = T '34_Interlocks'
