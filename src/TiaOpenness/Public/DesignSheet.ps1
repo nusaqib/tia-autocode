@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.4'
+$script:TiaSheetSchemaVersion = '1.5'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -18,8 +18,8 @@ $script:TiaSheetSchemaVersion = '1.4'
 #     need no qualifier.
 #   - 21_Modules: F-parameters added. F_DestAddr (PROFIsafe destination address) must be
 #     unique per network and is a reviewable safety parameter; Openness cannot set the
-#     F-DI sensor evaluation, so SensorEval records the INTENDED value for the manual TIA
-#     step and lets a report check it.
+#     F-DI sensor evaluation, so SensorEval recorded the INTENDED value for the manual TIA
+#     step. (Removed again in v1.5 - see below.)
 #   - 31_Policy added: DeviceType+Component -> certified instruction chain, declared ONCE.
 #     Previously every device carried its own 33_SafetyBlocks row (131 rows mechanically
 #     derived from DeviceType) - 131 chances to drift from a 10-line rule.
@@ -54,10 +54,19 @@ $script:TiaSheetSchemaVersion = '1.4'
 #     everything - the per-area boundary for change-impact analysis is gone.
 #   - {InputType} tag prefix: fi/fo (fail-safe in/out) or ni/no (standard), derived from
 #     the channel's module Kind, so a tag name states its own safety class.
+#
+# v1.5 changes:
+#   - 21_Modules.SensorEval REMOVED. Decision D01 fixes hardware evaluation at 1oo1 for
+#     every F-DI and does the 1oo2 in software (EV1oo2DI), so the column restated one
+#     project-wide decision on 42 rows. Worse, it looked like a build input and was not:
+#     Openness exposes no sensor-evaluation parameter at all - 37 Failsafe_* attributes on
+#     an F-DI, none of them evaluation - so the engine can neither set it NOR read it back
+#     to check. It is a manual TIA step with no automated verification, and saying that
+#     once in the docs is honest where a per-module column implied a check that never ran.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Stations'    = @('Area','Name','Description','Station_Name','Station_Label','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
-    '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
+    '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','AsBuiltRail','DrawingRef','Verified','Comment')
     '22_Devices'     = @('DeviceID','Area','Device','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
     '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
@@ -69,7 +78,6 @@ $script:TiaSheetSchema = [ordered]@{
 # closed enum sets: "Tab.Column" -> allowed values
 $script:TiaSheetEnums = @{
     '21_Modules.Kind'            = @('IM','F-DI','F-DQ','F-RQ','DI','DQ')
-    '21_Modules.SensorEval'      = @('1oo1','1oo2')
     '23_Channels.Signal'         = @('ChA','ChB','Diag')
     '23_Channels.Paired'         = @('Yes','No')
     '23_Channels.Invert'         = @('Yes','No')
@@ -335,10 +343,9 @@ function Test-TiaDesignSheet {
         return [pscustomobject]@{ Ok=$false; Errors=$errors; Warnings=$warns; Summary='schema failed' }
     }
 
-    # Columns that are legitimately blank on some rows: SensorEval applies only to F-DI,
-    # and a blank Invert means "follows the fail-safe convention" (the overwhelmingly
-    # common case), so requiring an explicit 'No' on 180-odd rows would be noise.
-    $blankOk = @('21_Modules.SensorEval','23_Channels.Invert')
+    # A blank Invert means "follows the fail-safe convention" (the overwhelmingly common
+    # case), so requiring an explicit 'No' on 180-odd rows would be noise.
+    $blankOk = @('23_Channels.Invert')
     foreach ($k in $script:TiaSheetEnums.Keys) {
         $t, $c = $k -split '\.', 2
         if (-not $tabs.ContainsKey($t)) { continue }
@@ -354,15 +361,6 @@ function Test-TiaDesignSheet {
             if ($allowed -cnotcontains $v) { $errors.Add("${t} row ${n}: '$c'='$v' not in {$($allowed -join ', ')}") }
         }
     }
-    foreach ($r in $tabs['21_Modules']) {
-        if ($r.Kind -eq 'F-DI' -and -not $r.SensorEval) {
-            $errors.Add("21_Modules $($r.ModuleName): F-DI needs SensorEval (1oo1 or 1oo2)")
-        }
-        if ($r.Kind -notlike 'F-*' -and $r.SensorEval) {
-            $errors.Add("21_Modules $($r.ModuleName): SensorEval is meaningless on a non-F module")
-        }
-    }
-
     # project keys - these drive project creation, so missing ones are hard errors
     $proj = @{}
     foreach ($r in $tabs['10_Project']) { if ($r.Key) { $proj[$r.Key] = [string]$r.Value } }
@@ -427,6 +425,23 @@ function Test-TiaDesignSheet {
             $errors.Add("20_Stations: IO system '$io' has stations on $($maskByIo[$io].Count) different subnet masks ($seen) - one IO system is one subnet")
         }
     }
+    # F-destination addresses: unique network-wide, and the compiler never checks them.
+    # TIA only auto-assigns through the GUI, so an unfilled column means every F-module in
+    # an Openness build keeps the catalogue default and they all collide.
+    $fMods = @($tabs['21_Modules'] | Where-Object { $_.Kind -like 'F-*' })
+    $fDeclared = @($fMods | Where-Object { $_.F_DestAddr })
+    if ($fMods.Count -and -not $fDeclared.Count) {
+        $warns.Add("21_Modules: no F_DestAddr on any of $($fMods.Count) F-module(s) - TIA does not auto-assign these through Openness, so they all keep the catalogue default and collide. They must match the BaseUnit DIP switches.")
+    } elseif ($fDeclared.Count -and $fDeclared.Count -lt $fMods.Count) {
+        $warns.Add("21_Modules: F_DestAddr on $($fDeclared.Count) of $($fMods.Count) F-module(s) - a partly assigned set can collide with the defaults on the rest")
+    }
+    $fSeen = @{}
+    foreach ($r in $fDeclared) {
+        if ($fSeen.ContainsKey($r.F_DestAddr)) {
+            $errors.Add("21_Modules: F_DestAddr $($r.F_DestAddr) used by both $($fSeen[$r.F_DestAddr]) and $($r.Area)/$($r.ModuleName) - it must be unique network-wide")
+        } else { $fSeen[$r.F_DestAddr] = "$($r.Area)/$($r.ModuleName)" }
+    }
+
     $modNameSeen = @{}
     $modPattern = $proj['ModulePattern']
     foreach ($r in $tabs['21_Modules']) {

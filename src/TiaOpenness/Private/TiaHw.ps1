@@ -188,6 +188,64 @@ function Set-TiaDeviceComment {
     $null
 }
 
+function Set-TiaModuleFParameter {
+    <#
+    .SYNOPSIS
+        Apply the declared PROFIsafe parameters to a plugged F-module, and read back what
+        the module actually ended up with.
+    .DESCRIPTION
+        The attributes live on the module's head DeviceItem, not the module object:
+        Failsafe_FDestinationAddress is ReadWrite; Failsafe_FMonitoringtime is Read until
+        Failsafe_ManualAssignmentFMonitoringtime is switched on, exactly like the PROFINET
+        name and its auto-generation flag.
+
+        Blank in the sheet means "let TIA assign", and the assigned value is still read back
+        - an F-destination address that nothing recorded is a safety parameter nobody can
+        review. Every write is verified by reading it again: SetAttribute on the wrong
+        target neither throws nor persists.
+    .OUTPUTS
+        Applied / Failed / Actual (what the module holds now, assigned or declared).
+    #>
+    param($Item, [string]$DestAddr, [string]$MonitorTime)
+    $applied = @(); $failed = @(); $actual = [ordered]@{}
+
+    # find the descendant that actually carries the Failsafe_* attribute set
+    $target = $null
+    foreach ($cand in @($Item) + @($Item.DeviceItems)) {
+        if (-not $cand) { continue }
+        try { $null = $cand.GetAttribute('Failsafe_FDestinationAddress'); $target = $cand; break } catch { }
+    }
+    if (-not $target) { return [pscustomobject]@{ Applied = @(); Failed = @(); Actual = $actual; IsFModule = $false } }
+
+    if ($DestAddr) {
+        $n = 0
+        if ([int]::TryParse($DestAddr, [ref]$n)) {
+            try {
+                $target.SetAttribute('Failsafe_FDestinationAddress', $n)
+                if ([string]$target.GetAttribute('Failsafe_FDestinationAddress') -eq [string]$n) { $applied += "fdest=$n" }
+                else { $failed += "F_DestAddr: set to $n did not persist" }
+            } catch { $failed += "F_DestAddr: $($_.Exception.Message)" }
+        } else { $failed += "F_DestAddr '$DestAddr' is not an integer" }
+    }
+    if ($MonitorTime) {
+        $n = 0
+        if ([int]::TryParse($MonitorTime, [ref]$n)) {
+            # the monitoring time is derived until manual assignment is switched on
+            try { $target.SetAttribute('Failsafe_ManualAssignmentFMonitoringtime', 1) } catch { }
+            try {
+                $target.SetAttribute('Failsafe_FMonitoringtime', $n)
+                if ([string]$target.GetAttribute('Failsafe_FMonitoringtime') -eq [string]$n) { $applied += "fmon=$n" }
+                else { $failed += "F_MonitorTime: set to $n did not persist" }
+            } catch { $failed += "F_MonitorTime: $($_.Exception.Message)" }
+        } else { $failed += "F_MonitorTime '$MonitorTime' is not an integer" }
+    }
+
+    foreach ($a in @('Failsafe_FDestinationAddress','Failsafe_FMonitoringtime')) {
+        try { $actual[$a] = [string]$target.GetAttribute($a) } catch { $actual[$a] = '' }
+    }
+    [pscustomobject]@{ Applied = $applied; Failed = $failed; Actual = $actual; IsFModule = $true }
+}
+
 function Get-TiaModuleAddress {
     <#
     .SYNOPSIS

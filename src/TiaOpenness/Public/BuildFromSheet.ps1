@@ -200,6 +200,10 @@ function Invoke-TiaBuildFromSheet {
 
     $plugged = 0; $failed = @(); $stations = @(); $netWarn = @(); $netInherit = @(); $labelled = 0
     $niType = [Siemens.Engineering.HW.Features.NetworkInterface]
+    # PROFIsafe parameters, applied where the sheet declares one and READ BACK either way.
+    # An F-destination address TIA assigned and nobody recorded is a safety parameter no
+    # review can check, so the built value lands in the address-map report regardless.
+    $fParam = @(); $fWarn = @()
 
     # --- CPU-local area: modules ride the CPU's own ET200SP rack ------------------------
     $cpuItems = Get-TiaDeviceItemTree -Device $cpuDev
@@ -214,6 +218,16 @@ function Invoke-TiaBuildFromSheet {
                 # slot 1 is the CPU itself on an ET200SP rack, so local modules shift up by 1
                 $slot = [int]$m.Slot + 1
                 $item = Add-TiaModuleProbed -Rack $cpuRack -OrderNumber $m.MLFB -Name $m.ModuleName -Slot $slot -Firmware $m.FW
+                if ($item -and $m.Kind -like 'F-*') {
+                    $fp = Set-TiaModuleFParameter -Item $item -DestAddr $m.F_DestAddr -MonitorTime $m.F_MonitorTime
+                    if ($fp.IsFModule) {
+                        foreach ($e in $fp.Failed) { $fWarn += "$localArea/$($m.ModuleName): $e" }
+                        $fParam += [pscustomobject]@{ Area = $localArea; Module = $m.ModuleName
+                            DeclaredDestAddr = [string]$m.F_DestAddr; DeclaredMonitorTime = [string]$m.F_MonitorTime
+                            BuiltDestAddr = [string]$fp.Actual['Failsafe_FDestinationAddress']
+                            BuiltMonitorTime = [string]$fp.Actual['Failsafe_FMonitoringtime'] }
+                    }
+                }
                 if ($item) { $plugged++ }
                 else { $localOk = $false; $failed += "$localArea/$($m.ModuleName) @ CPU slot $slot"; break }
             }
@@ -272,6 +286,16 @@ function Invoke-TiaBuildFromSheet {
         $n = 0
         foreach ($m in $mods) {
             $item = Add-TiaModuleProbed -Rack $rack -OrderNumber $m.MLFB -Name $m.ModuleName -Slot ([int]$m.Slot) -Firmware $m.FW
+            if ($item -and $m.Kind -like 'F-*') {
+                $fp = Set-TiaModuleFParameter -Item $item -DestAddr $m.F_DestAddr -MonitorTime $m.F_MonitorTime
+                if ($fp.IsFModule) {
+                    foreach ($e in $fp.Failed) { $fWarn += "$($z.Area)/$($m.ModuleName): $e" }
+                    $fParam += [pscustomobject]@{ Area = $z.Area; Module = $m.ModuleName
+                        DeclaredDestAddr = [string]$m.F_DestAddr; DeclaredMonitorTime = [string]$m.F_MonitorTime
+                        BuiltDestAddr = [string]$fp.Actual['Failsafe_FDestinationAddress']
+                        BuiltMonitorTime = [string]$fp.Actual['Failsafe_FMonitoringtime'] }
+                }
+            }
             if ($item) { $plugged++; $n++ }
             else { $failed += "$($z.Area)/$($m.ModuleName) @ slot $($m.Slot) ($($m.MLFB))" }
         }
@@ -294,6 +318,39 @@ function Invoke-TiaBuildFromSheet {
     }
 
     Write-Host ("  as-built labels written to device comments: {0}" -f $labelled)
+    if ($fParam.Count) {
+        $declared = @($fParam | Where-Object { $_.DeclaredDestAddr })
+        Write-Host ("  PROFIsafe: {0} F-module(s), {1} with a declared F_DestAddr, {2} auto-assigned by TIA" -f
+                    $fParam.Count, $declared.Count, ($fParam.Count - $declared.Count))
+        # An F-destination address must be unique network-wide, and the compiler does NOT
+        # check it - a whole rack can sit on one address and still compile 0 errors.
+        #
+        # TIA only runs its own auto-assignment through the GUI. In an Openness-only build
+        # every module keeps the catalogue default, so with nothing declared they ALL
+        # collide. That is "not assigned yet", not a build defect, so it is reported as an
+        # unmissable warning. Once ANY address is declared, a collision is a real fault and
+        # fails the phase.
+        $dupes = @($fParam | Where-Object { $_.BuiltDestAddr } | Group-Object BuiltDestAddr | Where-Object { $_.Count -gt 1 })
+        $anyDeclared = [bool]$declared.Count
+        foreach ($d in $dupes) {
+            $who = ($d.Group | ForEach-Object { "$($_.Area)/$($_.Module)" }) -join ', '
+            if ($anyDeclared) {
+                Write-Host ("  DUPLICATE F-destination address {0}: {1}" -f $d.Name, $who) -ForegroundColor Red
+                $failed += "duplicate F_DestAddr $($d.Name) on $who"
+            } else {
+                Write-Host ("  {0} F-module(s) share F-destination address {1}" -f $d.Group.Count, $d.Name) -ForegroundColor Yellow
+            }
+        }
+        if ($dupes.Count -and -not $anyDeclared) {
+            Write-Host "  TIA does not auto-assign F-destination addresses through Openness - every" -ForegroundColor Yellow
+            Write-Host "  F-module keeps the catalogue default and the compiler does not object." -ForegroundColor Yellow
+            Write-Host "  Fill 21_Modules.F_DestAddr to match the BaseUnit DIP switches." -ForegroundColor Yellow
+        }
+    }
+    if ($fWarn.Count) {
+        Write-Host "  $($fWarn.Count) PROFIsafe parameter(s) could not be set:" -ForegroundColor Yellow
+        foreach ($w in $fWarn) { Write-Host "    $w" -ForegroundColor Yellow }
+    }
     if ($netInherit.Count) {
         # Not a failure: an IO device whose IP is assigned by the controller has no writable
         # SubnetMask. Reported so the sheet value is not mistaken for something that was applied.
@@ -323,6 +380,17 @@ function Invoke-TiaBuildFromSheet {
     $addr = @()
     foreach ($s in $stations) {
         $addr += Get-TiaModuleAddress -Device $s.Device -Area $s.Area -Station $s.Station
+    }
+    # Attach the PROFIsafe values the modules actually hold. TIA assigns an F-destination
+    # address when the sheet leaves it blank, and an assigned safety parameter that nothing
+    # records cannot be reviewed - so it is reported here whether declared or not.
+    $fByKey = @{}
+    foreach ($f in $fParam) { $fByKey["$($f.Area)/$($f.Module)"] = $f }
+    foreach ($a in $addr) {
+        $f = $fByKey["$($a.Area)/$($a.Module)"]
+        $a | Add-Member -NotePropertyName F_DestAddr    -NotePropertyValue $(if ($f) { $f.BuiltDestAddr } else { '' })
+        $a | Add-Member -NotePropertyName F_MonitorTime -NotePropertyValue $(if ($f) { $f.BuiltMonitorTime } else { '' })
+        $a | Add-Member -NotePropertyName F_Declared    -NotePropertyValue $(if ($f -and $f.DeclaredDestAddr) { 'Yes' } elseif ($f) { 'No' } else { '' })
     }
     if (-not $ReportPath) {
         $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)

@@ -175,7 +175,7 @@ two devices onto one certified instance.
 
 **`21_Modules`** - one row per plugged module.
 
-`Area, Slot, Kind, MLFB, FW, ModuleName, InputBytes, F_DestAddr, F_MonitorTime, SensorEval, AsBuiltRail, DrawingRef, Verified, Comment`
+`Area, Slot, Kind, MLFB, FW, ModuleName, InputBytes, F_DestAddr, F_MonitorTime, AsBuiltRail, DrawingRef, Verified, Comment`
 
 - `Kind` enum: `IM`, `F-DI`, `F-DQ`, `F-RQ`, `DI`, `DQ`.
 - `(Area, Slot)` unique. `ModuleName` unique within an area - `23_Channels` joins on
@@ -184,13 +184,28 @@ two devices onto one certified instance.
   `10_Project.ModulePattern`; drift is reported as a warning, not rewritten.
 - `InputBytes` - process-image width (F-DI 8ch HF = 7). Used to sanity-check addresses;
   only **byte 0** of an F-DI range carries the 8 safe channel values.
-- `F_DestAddr` - PROFIsafe destination address (F-destination). **Must be unique across
-  the network** and is a reviewable safety parameter, so it is declared, not auto-assigned.
-- `F_MonitorTime` - PROFIsafe monitoring time.
-- `SensorEval` enum `1oo1`/`1oo2` - required on `F-DI`, rejected on non-F modules. Openness
-  **cannot** set the F-DI sensor evaluation, so this column states the intended value: it
-  drives the manual TIA step and lets a report check what was actually configured. With
-  1oo2 evaluated in software (`EV1oo2DI`) this is normally `1oo1`.
+- `F_DestAddr` - PROFIsafe **F-destination address**: the address the F-CPU uses to prove
+  it is talking to the intended F-module. It must be unique network-wide, it is part of the
+  F-parameter signature, and it must match the DIP switches on the physical BaseUnit. A
+  value here is applied to the module and verified by read-back; **blank means TIA assigns
+  one** (descending from 65534), and the assigned value is read back into
+  `reports/90_AddressMap.csv` either way - an F-parameter nothing recorded cannot be
+  reviewed. A duplicate built address fails the phase.
+- `F_MonitorTime` - PROFIsafe **monitoring time** (ms): how long the F-CPU waits for a valid
+  safety telegram before passivating the module. Too short and the module trips on normal
+  bus jitter; too long and the safety reaction time grows. Blank means TIA derives it;
+  setting it switches `Failsafe_ManualAssignmentFMonitoringtime` on first, because the
+  attribute is read-only while it is derived.
+- `AsBuiltRail` - which physical rail/row the module sits on. **Documentation only**: it is
+  not applied to the project and not validated, and exists so a reader can find the module
+  in the cabinet.
+
+> **Sensor evaluation is NOT a column** (removed in v1.5). Openness exposes no
+> sensor-evaluation parameter at all - an F-DI has 37 `Failsafe_*` attributes and none of
+> them is evaluation - so the build can neither set it nor read it back to check. It is a
+> manual TIA step with no automated verification. The project-wide decision (1oo1 in
+> hardware, 1oo2 in software via `EV1oo2DI`) is recorded once in `02_Decisions` D01; a
+> per-module column implied a check that never ran.
 
 **`22_Devices`** - one row per physical device.
 
@@ -300,6 +315,10 @@ Exit code is non-zero on any error. Warnings do not fail the build but are print
 
 ## Schema history
 
+- **v1.5** - `21_Modules.SensorEval` REMOVED (see the note under `21_Modules`). The
+  Hardware phase now applies `F_DestAddr` / `F_MonitorTime` where declared, verifies them by
+  read-back, fails on a duplicate built F-destination address, and records the built values
+  in `reports/90_AddressMap.csv` whether declared or auto-assigned.
 - **v1.4** - **one data block, three program blocks.** `22_Devices.DeviceRef` -> `Device`.
   Areas become GENERATED UDTs (`AreaUdtPattern`) instantiated in a single system F-DB, so a
   member path gains an area level (`DB_SR_PPS.BTA.SE0101.EMO.ChA`) and `DbPattern` is a

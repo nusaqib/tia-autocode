@@ -15,7 +15,7 @@ function Export-TiaDesignWorkbook {
     .DESCRIPTION
         Emits every tab in schema order with a frozen, bold header row, sized columns and
         dropdown validation on the closed-enum columns - so the safety-critical fields
-        (Invert, Verified, Instruction, Kind, SensorEval, Include) cannot be typo'd into
+        (Invert, Verified, Instruction, Kind, Include) cannot be typo'd into
         a value the validator will later reject.
 
         Derived data is NOT written: addresses, tag names and member paths come from the
