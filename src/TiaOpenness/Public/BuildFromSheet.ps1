@@ -24,7 +24,9 @@ function Invoke-TiaBuildFromSheet {
     .PARAMETER ProjectPath
         Output folder for the TIA project. Defaults to 10_Project's ProjectPath key.
     .PARAMETER Phase
-        Hardware (default) or Logic. Logic is not implemented yet.
+        Hardware (default), Types, Data, Tags, IOMap, Certified or Safety. Only Hardware is
+        implemented; the others have a defined input/output contract in the project's
+        docs/BUILD.md and throw until built.
     .PARAMETER Force
         Proceed past design-validation errors that do not affect the hardware rows.
     .PARAMETER Save
@@ -38,7 +40,7 @@ function Invoke-TiaBuildFromSheet {
     param(
         [string]$Path = '.\design\csv',
         [string]$ProjectPath,
-        [ValidateSet('Hardware','Logic')][string]$Phase = 'Hardware',
+        [ValidateSet('Hardware','Types','Data','Tags','IOMap','Certified','Safety')][string]$Phase = 'Hardware',
         [switch]$Force,
         [switch]$Save,
         [string]$ReportPath
@@ -47,16 +49,22 @@ function Invoke-TiaBuildFromSheet {
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not (Test-Path $Path)) { throw "No design snapshot at $Path" }
 
-    if ($Phase -eq 'Logic') {
-        throw "Phase 'Logic' is not implemented yet - the certified F-LAD emitters are still to be written."
+    if ($Phase -ne 'Hardware') {
+        throw ("Phase '$Phase' is not implemented yet. Its input/output contract is defined in " +
+               "the project's docs/BUILD.md; only 'Hardware' is built today.")
     }
 
     # --- design gate ------------------------------------------------------------------
+    # Asymmetric on purpose: racks are inert, so an unrelated design error can be forced
+    # past. Certified safety logic is the trip path and gets no such escape hatch.
     $val = Test-TiaDesignSheet -Path $Path
     Write-Host "design: $($val.Summary)"
     if (-not $val.Ok) {
         Write-Host "design validation FAILED with $($val.Errors.Count) error(s):" -ForegroundColor Yellow
         foreach ($e in $val.Errors) { Write-Host "  $e" -ForegroundColor Yellow }
+        if ($Phase -ne 'Hardware') {
+            throw "Design does not validate - phase '$Phase' will not run. -Force does not override this."
+        }
         if (-not $Force) {
             throw ("Design does not validate. Fix it, or re-run with -Force to build HARDWARE " +
                    "only from the verified rack rows (safety logic is never generated from an " +
