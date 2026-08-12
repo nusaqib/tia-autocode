@@ -74,8 +74,58 @@ function Sync-TiaDesignSheet {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
     $changed = @(); $same = @(); $state = [ordered]@{}
-    foreach ($tab in $cfg.tabs.PSObject.Properties) {
+
+    # 'xlsx-export' fetches the WHOLE workbook once and reads tabs by name - no gids to
+    # maintain, and it works with plain link-sharing (no publish-to-web).
+    $book = $null; $bookTabs = $null
+    if ($transport -eq 'xlsx-export') {
+        $book = Join-Path ([IO.Path]::GetTempPath()) ("tia-sheet-" + [guid]::NewGuid().ToString('n') + ".xlsx")
+        $url = "https://docs.google.com/spreadsheets/d/$($cfg.sheetId)/export?format=xlsx"
+        Write-Verbose "GET $url"
+        try { Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $book -ErrorAction Stop }
+        catch { throw "Workbook fetch failed: $($_.Exception.Message)" }
+        $magic = [System.IO.File]::ReadAllBytes($book)[0..1]
+        if ($magic[0] -ne 0x50 -or $magic[1] -ne 0x4B) {
+            Remove-Item $book -Force -ErrorAction SilentlyContinue
+            throw ("Workbook fetch returned HTML, not xlsx - the sheet is not readable by " +
+                   "link. Share it (Anyone with the link -> Viewer) or use transport 'api-key'.")
+        }
+        $bookTabs = Get-TiaXlsxSheetName -Path $book
+        Write-Verbose ("workbook tabs: " + ($bookTabs -join ', '))
+    }
+
+    # tab list: sheet.json when populated, else whatever the workbook contains
+    $tabList = @()
+    if ($cfg.tabs) { $tabList = @($cfg.tabs.PSObject.Properties) }
+    if ($transport -eq 'xlsx-export' -and (-not $tabList -or -not $tabList.Count)) {
+        $tabList = @($bookTabs | ForEach-Object { [pscustomobject]@{ Name = $_; Value = '' } })
+    }
+
+    foreach ($tab in $tabList) {
         $name = $tab.Name; $gid = [string]$tab.Value
+        if ($transport -eq 'xlsx-export') {
+            if ($bookTabs -notcontains $name) {
+                Write-Host ("  {0,-18} MISSING in the sheet - skipped" -f $name) -ForegroundColor Yellow
+                continue
+            }
+            $rows = @(Import-TiaXlsx -Path $book -Sheet $name)
+            $cols = if ($rows.Count) { $rows[0].PSObject.Properties.Name } else { @() }
+            $vals = @(, $cols)
+            foreach ($r in $rows) { $vals += , @($cols | ForEach-Object { [string]$r.$_ }) }
+            $text = (ConvertTo-TiaCsvText -Values $vals)
+            $text = ($text -replace "`r`n", "`n").TrimEnd("`n")
+            $target = Join-Path $outDir "$name.csv"
+            $old = if (Test-Path $target) { ((Get-Content -Raw $target) -replace "`r`n","`n").TrimEnd("`n") } else { $null }
+            if ($old -ne $text) { $changed += $name } else { $same += $name }
+            if (-not $DiffOnly) {
+                [System.IO.File]::WriteAllText($target, $text + "`n", (New-Object System.Text.UTF8Encoding($false)))
+            }
+            $sha = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($text)))).Hash
+            $state[$name] = [ordered]@{ rows = $rows.Count; sha256 = $sha }
+            Write-Host ("  {0,-18} {1,4} rows {2}" -f $name, $rows.Count,
+                        $(if ($changed -contains $name) { 'CHANGED' } else { 'unchanged' }))
+            continue
+        }
         switch ($transport) {
             'api-key' {
                 if (-not $ApiKey) { $ApiKey = $cfg.apiKey }
@@ -117,6 +167,8 @@ function Sync-TiaDesignSheet {
         Write-Host ("  {0,-18} {1,4} rows {2}" -f $name, [Math]::Max(0,$lines.Count-1),
                     $(if ($changed -contains $name) { 'CHANGED' } else { 'unchanged' }))
     }
+
+    if ($book -and (Test-Path $book)) { Remove-Item $book -Force -ErrorAction SilentlyContinue }
 
     if (-not $DiffOnly) {
         $meta = [ordered]@{

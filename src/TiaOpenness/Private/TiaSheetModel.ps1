@@ -1,6 +1,23 @@
 # Read a design-sheet CSV snapshot into a structured model.
 # Schema contract: docs/DESIGN-SHEET.md. Consumed by Invoke-TiaBuildFromSheet.
 
+function Get-TiaXlsxSheetName {
+    <#
+    .SYNOPSIS
+        Tab names of an .xlsx, in workbook order (dependency-free: zip + xl/workbook.xml).
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $e = $zip.Entries | Where-Object { $_.FullName -eq 'xl/workbook.xml' }
+        if (-not $e) { throw "not an xlsx (no xl/workbook.xml): $Path" }
+        $sr = New-Object System.IO.StreamReader($e.Open())
+        try { $xml = [xml]$sr.ReadToEnd() } finally { $sr.Close() }
+        @($xml.workbook.sheets.sheet | ForEach-Object { $_.name })
+    } finally { $zip.Dispose() }
+}
+
 function Read-TiaSheetModel {
     <#
     .SYNOPSIS
