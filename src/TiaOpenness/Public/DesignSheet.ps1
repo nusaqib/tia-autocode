@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.2'
+$script:TiaSheetSchemaVersion = '1.3'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
