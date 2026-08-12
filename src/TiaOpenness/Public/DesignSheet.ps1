@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.7'
+$script:TiaSheetSchemaVersion = '1.8'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -105,14 +105,32 @@ $script:TiaSheetSchemaVersion = '1.7'
 #   Consequence to be aware of: the seeded provenance is now git history, not sheet data.
 #   Any device grouping that was justified by a legacy tag must be justified by a drawing
 #   reference from here on - which is what DrawingRef is for.
+#
+# v1.8 changes - 22_Devices REMOVED; the area UDTs are authored:
+#   - The Area UDTs are declared in 30_UDTs like any other type, instead of being invented
+#     by the build from 22_Devices. That also makes Area_Reset / Interlocks_OK / Area_Safe
+#     real rows: they were referenced by 31_Policy.AckSource and 34_Interlocks.Target while
+#     being declared nowhere, which is exactly the hidden constant this schema exists to
+#     prevent. The build still generates them for a sheet that predates this, but authored
+#     rows always win.
+#   - 22_Devices is then redundant. A device IS a member of its area's UDT, so the member
+#     row already carries the name, the type and the description. The device list is
+#     derived from those rows and DeviceID - still the key 23_Channels and 34_Interlocks
+#     join on - is exactly "{Area}_{Member}".
+#   - 31_Policy drops DeviceType and keys on UDT + Component. Its UDT column used to hold
+#     the COMPONENT's type (UDT_SafeInput on every row, saying nothing); it now holds the
+#     type of the device the rule applies to. Keying on the UDT means a rule cannot be
+#     matched to a device whose data structure has nowhere to put the result - a guarantee
+#     a free-text DeviceType label never gave.
+#   - Interlock coverage no longer keys off 22_Devices.InInterlock. The rule is now: a
+#     device with channels must appear in 34_Interlocks, included or excluded-with-reason.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Stations'    = @('Area','Name','Description','Station_Name','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
     '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','DrawingRef','Verified','Comment')
-    '22_Devices'     = @('DeviceID','Area','Device','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
     '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
-    '31_Policy'      = @('PolicyID','DeviceType','Component','UDT','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
+    '31_Policy'      = @('PolicyID','UDT','Component','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
     '32_Blocks'      = @('Block','Area','Layer','Language','Number','Description')
     '33_SafetyBlocks'= @('RowID','DeviceID','Component','Instruction','Version','InstanceName','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Verified','Notes')
     '34_Interlocks'  = @('Area','Target','DeviceID','Member','Include','Rationale','SF_ID')
@@ -123,7 +141,6 @@ $script:TiaSheetEnums = @{
     '23_Channels.Signal'         = @('ChA','ChB','Diag')
     '23_Channels.Paired'         = @('Yes','No')
     '23_Channels.Invert'         = @('Yes','No')
-    '22_Devices.InInterlock'     = @('Yes','No')
     '31_Policy.Instruction'      = @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
     '32_Blocks.Layer'            = @('IOMap','Safety','Certified','Runtime','Data')
     '32_Blocks.Language'         = @('F_LAD','F_DB','F_FBD','LAD','SCL')
@@ -131,7 +148,7 @@ $script:TiaSheetEnums = @{
     '34_Interlocks.Target'       = @('Interlocks_OK','Area_Safe')
     '34_Interlocks.Include'      = @('Yes','No')
 }
-$script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','22_Devices','23_Channels','31_Policy','33_SafetyBlocks')
+$script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','23_Channels','31_Policy','33_SafetyBlocks')
 
 # Headers for every known tab, including the optional/governance ones. Used to preserve a
 # tab's header when it legitimately has zero data rows (the xlsx reader consumes row 1 as
@@ -417,21 +434,45 @@ function Test-TiaDesignSheet {
     }
 
     $areas   = @{}; foreach ($r in $tabs['20_Stations'])  { $areas[$r.Area] = $r }
-    $devices = @{}; foreach ($r in $tabs['22_Devices']){ $devices[$r.DeviceID] = $r }
     $udts    = @{}; foreach ($r in $tabs['30_UDTs'])   { $udts[$r.UDT] = $true }
     $mods    = @{}; foreach ($r in $tabs['21_Modules']){ $mods["$($r.Area)/$($r.ModuleName)"] = $r }
 
+    # A device is a member of its area's UDT. Mirror what the model does so the rules below
+    # read the same list the build will.
+    $areaPat = [string]$proj['AreaUdtPattern']
+    if (-not $areaPat) { $areaPat = 'UDT_Area_{Area}' }
+    $areaScalars = @('Area_Reset', 'Interlocks_OK', 'Area_Safe')
+    $areaByUdt = @{}
+    foreach ($a in $areas.Keys) { $areaByUdt[($areaPat -replace '\{Area\}', $a)] = $a }
+
+    # @($null) is a ONE-element array in PowerShell, so filter rather than trust .Count
+    $deviceRows = @($tabs['22_Devices'] | Where-Object { $_ })
+    if (-not $deviceRows.Count) {
+        $deviceRows = @()
+        foreach ($u in $tabs['30_UDTs']) {
+            if (-not $areaByUdt.ContainsKey($u.UDT)) { continue }
+            if ($areaScalars -contains $u.Member) { continue }
+            $a = $areaByUdt[$u.UDT]
+            $deviceRows += [pscustomobject]@{
+                DeviceID = "${a}_$($u.Member)"; Area = $a; Device = $u.Member
+                UDT = ([string]$u.Datatype).Trim().Trim('"'); Description = $u.Comment
+                InInterlock = ''; SF_ID = ''; Verified = ''
+            }
+        }
+    }
+    $devices = @{}; foreach ($r in $deviceRows) { $devices[$r.DeviceID] = $r }
+
     $refSeen = @{}; $idSeen = @{}
-    foreach ($r in $tabs['22_Devices']) {
-        if (-not $areas.ContainsKey($r.Area)) { $errors.Add("22_Devices $($r.DeviceID): unknown Area '$($r.Area)'") }
-        if ($r.UDT -and -not $udts.ContainsKey($r.UDT)) { $errors.Add("22_Devices $($r.DeviceID): UDT '$($r.UDT)' not in 30_UDTs") }
-        if ($idSeen.ContainsKey($r.DeviceID)) { $errors.Add("22_Devices: duplicate DeviceID '$($r.DeviceID)'") }
+    foreach ($r in $deviceRows) {
+        if (-not $areas.ContainsKey($r.Area)) { $errors.Add("device $($r.DeviceID): unknown Area '$($r.Area)'") }
+        if ($r.UDT -and -not $udts.ContainsKey($r.UDT)) { $errors.Add("device $($r.DeviceID): UDT '$($r.UDT)' not in 30_UDTs") }
+        if ($idSeen.ContainsKey($r.DeviceID)) { $errors.Add("duplicate DeviceID '$($r.DeviceID)'") }
         else { $idSeen[$r.DeviceID] = $true }
         # Device becomes the F-DB member name, so it must be unique within its area or
         # two devices silently share one set of safety data
         $k = "$($r.Area)|$($r.Device)"
         if ($refSeen.ContainsKey($k)) {
-            $errors.Add("22_Devices: area $($r.Area) has two devices with Device '$($r.Device)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
+            $errors.Add("area $($r.Area) has two devices named '$($r.Device)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
         } else { $refSeen[$k] = $r.DeviceID }
     }
     $ipSeen = @{}; $dnSeen = @{}; $stSeen = @{}; $maskByIo = @{}
@@ -586,6 +627,39 @@ function Test-TiaDesignSheet {
         }
     }
 
+    # MIGRATION CROSS-CHECK. While both exist, an authored UDT_Area_* must describe exactly
+    # what 22_Devices does for that area - same members, same types. This is what makes it
+    # safe to delete 22_Devices: the equivalence is proved rather than assumed.
+    $areaPat = ''
+    foreach ($r in $tabs['10_Project']) { if ($r.Key -eq 'AreaUdtPattern') { $areaPat = [string]$r.Value } }
+    if (-not $areaPat) { $areaPat = 'UDT_Area_{Area}' }
+    $authoredAreas = @($tabs['30_UDTs'] | Where-Object { $_.UDT -like ($areaPat -replace '\{Area\}', '*') })
+    if ($authoredAreas.Count -and @($tabs['22_Devices'] | Where-Object { $_ }).Count) {
+        $scalars = @('Area_Reset', 'Interlocks_OK', 'Area_Safe')
+        foreach ($a in $areas.Keys) {
+            $an = $areaPat -replace '\{Area\}', $a
+            $auth = @{}
+            foreach ($r in ($authoredAreas | Where-Object { $_.UDT -eq $an })) {
+                if ($scalars -contains $r.Member) { continue }
+                $auth[$r.Member] = ([string]$r.Datatype).Trim().Trim('"')
+            }
+            $fromDev = @{}
+            foreach ($d in ($tabs['22_Devices'] | Where-Object { $_.Area -eq $a })) { $fromDev[$d.Device] = $d.UDT }
+            foreach ($m in $auth.Keys) {
+                if (-not $fromDev.ContainsKey($m)) { $errors.Add("30_UDTs ${an}: member '$m' has no matching 22_Devices row in area $a") }
+                elseif ($fromDev[$m] -ne $auth[$m]) { $errors.Add("30_UDTs ${an}.${m}: type '$($auth[$m])' but 22_Devices says '$($fromDev[$m])'") }
+            }
+            foreach ($m in $fromDev.Keys) {
+                if (-not $auth.ContainsKey($m)) { $errors.Add("22_Devices: $a device '$m' is missing from the authored $an") }
+            }
+            foreach ($s in $scalars) {
+                if (-not ($authoredAreas | Where-Object { $_.UDT -eq $an -and $_.Member -eq $s })) {
+                    $errors.Add("30_UDTs ${an}: no '$s' member - 31_Policy.AckSource and 34_Interlocks.Target reference it")
+                }
+            }
+        }
+    }
+
     # interlock coverage - a device wired and indicated but absent from the trip path
     # is worse than absent, because it looks functional
     $inter = @{}
@@ -599,9 +673,17 @@ function Test-TiaDesignSheet {
             $errors.Add("34_Interlocks $($r.DeviceID): Member '$($r.Member)' - '$leaf' is not a member of $u")
         }
     }
-    foreach ($d in $tabs['22_Devices']) {
-        if ($d.InInterlock -eq 'Yes' -and -not $inter.ContainsKey($d.DeviceID)) {
-            $errors.Add("34_Interlocks: device $($d.DeviceID) is InInterlock=Yes but not included in any interlock target")
+    # Coverage: a device that is wired has a safety result, and that result either feeds the
+    # trip path or is explicitly excluded with a reason. Silence is the failure mode this
+    # catches - a device present, evaluated, and quietly contributing to nothing.
+    $wired = @{}
+    foreach ($g in $group.Keys) { $wired[(($g -split '\|', 2)[0])] = $true }
+    $inAny = @{}
+    foreach ($r in $tabs['34_Interlocks']) { $inAny[$r.DeviceID] = $true }
+    foreach ($did in $wired.Keys) {
+        if (-not $devices.ContainsKey($did)) { continue }
+        if (-not $inAny.ContainsKey($did)) {
+            $errors.Add("34_Interlocks: $did has channels and a certified result but appears in no interlock row - include it, or exclude it with a Rationale")
         }
     }
 
@@ -609,7 +691,7 @@ function Test-TiaDesignSheet {
     # must resolve to a rule - an unmatched device would silently get no evaluation.
     $policy = @{}
     foreach ($r in $tabs['31_Policy']) {
-        $pk = "$($r.DeviceType)|$($r.Component)"
+        $pk = "$(([string]$r.UDT).Trim().Trim('"'))|$($r.Component)"
         if (-not $policy.ContainsKey($pk)) { $policy[$pk] = @() }
         $policy[$pk] += $r
     }
@@ -618,11 +700,11 @@ function Test-TiaDesignSheet {
     foreach ($g in $group.Keys) {
         $did, $comp = $g -split '\|', 2
         if (-not $devices.ContainsKey($did)) { continue }
-        $dt = $devices[$did].DeviceType
+        $dt = $devices[$did].UDT
         $pk = "$dt|$comp"
         if (-not $policy.ContainsKey($pk)) {
             if (-not $override.ContainsKey($g)) {
-                $errors.Add("31_Policy: no rule for DeviceType '$dt' component '$comp' (e.g. $did) - it would get no certified evaluation")
+                $errors.Add("31_Policy: no rule for UDT '$dt' component '$comp' (e.g. $did) - it would get no certified evaluation")
             }
             continue
         }
@@ -708,7 +790,7 @@ function Test-TiaDesignSheet {
     }
 
     $summary = ("{0} areas, {1} modules, {2} devices, {3} channels, {4} safety blocks, {5} unverified" -f
-        $tabs['20_Stations'].Count, $tabs['21_Modules'].Count, $tabs['22_Devices'].Count,
+        $tabs['20_Stations'].Count, $tabs['21_Modules'].Count, $deviceRows.Count,
         $tabs['23_Channels'].Count, $tabs['33_SafetyBlocks'].Count, $unver)
     [pscustomobject]@{ Ok = ($errors.Count -eq 0); Errors = $errors; Warnings = $warns; Summary = $summary }
 }

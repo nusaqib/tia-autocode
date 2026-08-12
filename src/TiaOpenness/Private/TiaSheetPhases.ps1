@@ -102,9 +102,18 @@ function Get-TiaSheetAreaUdtRows {
     if (-not $pattern) { $pattern = 'UDT_Area_{Area}' }
     $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
 
+    # AUTHORED WINS. When 30_UDTs already declares the area types, they are the design and
+    # nothing here invents one - that is the whole point of making them explicit, and it is
+    # what lets Area_Reset / Interlocks_OK / Area_Safe stop being constants buried in code.
+    # Generation below stays only as the migration path for a sheet that predates this.
+    $authored = @($Model.Udts | Where-Object {
+        $_.UDT -like ($pattern -replace '\{Area\}', '*')
+    })
+    if ($authored.Count) { return $authored }
+
     $rows = @()
     foreach ($z in $Model.Stations) {
-        $devs = @($Model.DevicesByArea[$z.Area])
+        $devs = @($Model.DevicesByArea[$z.Area] | Where-Object { $_ })
         if (-not $devs.Count) { continue }
         $name = Expand-TiaSheetPattern -Pattern $pattern -Values @{ Area = $z.Area }
         $order = 1; $seen = @{}
@@ -390,9 +399,13 @@ function Get-TiaSheetCertifiedPlan {
         if (-not $policy.ContainsKey($k)) { $policy[$k] = @() }
         $policy[$k] += $r
     }
+    # Rules key on the device's UDT + Component, not on a DeviceType label. The UDT is the
+    # structure the instruction chain writes into, so keying on it means a rule cannot be
+    # matched to a device whose data has nowhere to put the result. DeviceType was free
+    # text with no such guarantee.
     $byType = @{}
     foreach ($r in $Model.Policy) {
-        $k = "$($r.DeviceType)|$($r.Component)"
+        $k = "$(([string]$r.UDT).Trim().Trim('"'))|$($r.Component)"
         if (-not $byType.ContainsKey($k)) { $byType[$k] = @() }
         $byType[$k] += $r
     }
@@ -415,8 +428,8 @@ function Get-TiaSheetCertifiedPlan {
         $rows = $groups[$k]
         $did, $comp = $k -split '\|', 2
         $d = $Model.DeviceById[$did]
-        $rules = if ($policy.ContainsKey($k)) { $policy[$k] } else { $byType["$($d.DeviceType)|$comp"] }
-        if (-not $rules) { $missing += "no 31_Policy rule for DeviceType '$($d.DeviceType)' component '$comp' (e.g. $did)"; continue }
+        $rules = if ($policy.ContainsKey($k)) { $policy[$k] } else { $byType["$($d.UDT)|$comp"] }
+        if (-not $rules) { $missing += "no 31_Policy rule for UDT '$($d.UDT)' component '$comp' (e.g. $did)"; continue }
 
         $chA = @($rows | Where-Object { $_.Signal -eq 'ChA' -or $_.Member -like '*.ChA' }) | Select-Object -First 1
         $chB = @($rows | Where-Object { $_.Member -like '*.ChB' }) | Select-Object -First 1
@@ -775,7 +788,8 @@ function Invoke-TiaSheetDataPhase {
     foreach ($z in $Model.Stations) {
         $u = Expand-TiaSheetPattern -Pattern $areaPattern -Values @{ Area = $z.Area }
         if ($areaUdts -notcontains $u) { Write-Host "  $($z.Area): no devices - skipped"; continue }
-        $n = @($Model.DevicesByArea[$z.Area]).Count
+        # @($null).Count is 1, not 0 - an area with no devices would inflate the total
+        $n = @($Model.DevicesByArea[$z.Area] | Where-Object { $_ }).Count
         $devTotal += $n
         $members += [pscustomobject]@{ Name = $z.Area; Datatype = $u
                                        Comment = "$($z.Name) - $n device(s)" }
@@ -829,10 +843,18 @@ function Invoke-TiaSheetTypePhase {
 
     $authored = @($Model.Udts)
     if (-not $authored.Count) { throw "30_UDTs is empty - nothing to create." }
-    # The generated Area UDTs join the authored ones here so they share the dependency
-    # ordering and the F-compliance check - an area type nests device types, so it must be
-    # created after them, and Get-TiaUdtBuildOrder is what knows that.
+    # Area UDTs join the authored ones here so they share the dependency ordering and the
+    # F-compliance check - an area type nests device types, so it must be created after
+    # them, and Get-TiaUdtBuildOrder is what knows that.
+    #
+    # When the areas are authored in 30_UDTs, Get-TiaSheetAreaUdtRows hands those same rows
+    # straight back - appending them would declare every member twice and TIA rejects the
+    # import with "Element 'X' is not unique". So append only what 30_UDTs does not already
+    # carry.
     $areaRows = @(Get-TiaSheetAreaUdtRows -Model $Model)
+    $have = @{}
+    foreach ($r in $authored) { $have["$($r.UDT)|$($r.Member)"] = $true }
+    $areaRows = @($areaRows | Where-Object { -not $have.ContainsKey("$($_.UDT)|$($_.Member)") })
     $rows = $authored + $areaRows
 
     $names = @($rows | ForEach-Object { $_.UDT } | Select-Object -Unique)
@@ -851,9 +873,10 @@ function Invoke-TiaSheetTypePhase {
 
     if (-not $XmlDir) { $XmlDir = Join-Path ([IO.Path]::GetTempPath()) ('tia-udt-' + [guid]::NewGuid().ToString('n')) }
     $order = Get-TiaUdtBuildOrder -Rows $rows
-    Write-Host ("types: {0} UDT(s) = {1} authored + {2} generated area type(s)" -f $order.Count,
+    $genCount = @($areaRows | ForEach-Object { $_.UDT } | Select-Object -Unique).Count
+    Write-Host ("types: {0} UDT(s) = {1} authored{2}" -f $order.Count,
                 @($authored | ForEach-Object { $_.UDT } | Select-Object -Unique).Count,
-                @($areaRows | ForEach-Object { $_.UDT } | Select-Object -Unique).Count)
+                $(if ($genCount) { " + $genCount generated area type(s)" } else { ' (areas authored)' }))
     Write-Host ("  creation order: {0}" -f ($order -join ' -> '))
 
     $created = @(); $skipped = @(); $compile = $null; $cErr = 0

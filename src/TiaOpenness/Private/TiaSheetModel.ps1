@@ -49,6 +49,35 @@ function Read-TiaSheetModel {
     }
     $model = [pscustomobject]$m
 
+    # A device IS a member of its area's UDT. Once 30_UDTs declares those areas explicitly
+    # there is nothing left for 22_Devices to say that the UDT row does not, so the device
+    # list is synthesised from it and the tab is gone. DeviceID stays as the key channels
+    # and interlocks join on, and is exactly "{Area}_{Member}" - the validator enforces that
+    # rather than leaving it as a convention someone has to know.
+    if (-not $model.Devices.Count -and $model.Udts.Count) {
+        $pattern = $proj['AreaUdtPattern']
+        if (-not $pattern) { $pattern = 'UDT_Area_{Area}' }
+        $like = $pattern -replace '\{Area\}', '*'
+        # longest-match area name, so S01_FE never resolves as S01
+        $areaNames = @($model.Stations | ForEach-Object { [string]$_.Area } |
+                       Sort-Object { $_.Length } -Descending)
+        $scalars = @('Area_Reset', 'Interlocks_OK', 'Area_Safe')
+        $synth = @()
+        foreach ($u in $model.Udts) {
+            if ($u.UDT -notlike $like) { continue }
+            if ($scalars -contains $u.Member) { continue }
+            $area = $areaNames | Where-Object { $u.UDT -eq ($pattern -replace '\{Area\}', $_) } | Select-Object -First 1
+            if (-not $area) { continue }
+            $synth += [pscustomobject]@{
+                DeviceID = "${area}_$($u.Member)"; Area = $area; Device = $u.Member
+                UDT = ([string]$u.Datatype).Trim().Trim('"'); Description = $u.Comment
+                Location = ''; DrawingRef = ''; InInterlock = 'Yes'; SF_ID = ''
+                Verified = ''; Notes = ''
+            }
+        }
+        $model.Devices = $synth
+    }
+
     # indexes
     $devById = @{}; foreach ($d in $model.Devices) { $devById[$d.DeviceID] = $d }
     $model | Add-Member -NotePropertyName DeviceById -NotePropertyValue $devById
@@ -149,7 +178,7 @@ function Get-TiaSheetAreaChannels {
     #>
     param($Model, [string]$Area)
     $out = @()
-    foreach ($d in @($Model.DevicesByArea[$Area])) {
+    foreach ($d in @($Model.DevicesByArea[$Area] | Where-Object { $_ })) {
         foreach ($c in @($Model.ChannelsByDevice[$d.DeviceID])) {
             if ($c.Signal -eq 'Diag') { continue }
             $out += [pscustomobject]@{

@@ -30,10 +30,10 @@ design workbook --Sync-TiaDesignSheet--> design/csv/*.csv  (COMMITTED = the buil
 |---|---|---|---|
 | 1 | `Project` | `10_Project` | the project file and the CPU |
 | 2 | `Hardware` | `20_Stations`, `21_Modules` | stations, modules, subnet + IO system, `90_AddressMap.csv` |
-| 3 | `UDTs` | `30_UDTs`, `22_Devices` | device types **plus one generated type per area** |
-| 4 | `DB` | `22_Devices`, `32_Blocks` | one system F-DB, every area a typed member |
+| 3 | `UDTs` | `30_UDTs` | every UDT, device types and area types alike |
+| 4 | `DB` | `30_UDTs`, `32_Blocks` | one system F-DB, every area a typed member |
 | 5 | `Tags` | `23_Channels`, `90_AddressMap` | one PLC tag per channel at its live address |
-| 6 | `IOMap` | `23_Channels`, `22_Devices` | `FB_IOMap` - channel tag into DB member |
+| 6 | `IOMap` | `23_Channels`, `30_UDTs` | `FB_IOMap` - channel tag into DB member |
 | 7 | `Certified` | `31_Policy`, `33_SafetyBlocks` | `FB_Certified` - ESTOP1 / SFDOOR / EV1oo2DI |
 | 8 | `Interlocks` | `34_Interlocks` | `FB_Safety` + the safety runtime |
 
@@ -50,9 +50,8 @@ forced: a typo in `ProjectPath` must not be able to erase a live project.
 | `10_Project` | the project, the CPU, safety settings, naming + numbering rules |
 | `20_Stations` | PROFINET stations, addressing and the IO system |
 | `21_Modules` | plugged modules (CPU-local and remote) |
-| `22_Devices` | members of each generated area UDT |
 | `23_Channels` | PLC tags at live addresses + the IOMap rungs (incl. signal inversion) |
-| `30_UDTs` | the UDT library |
+| `30_UDTs` | the UDT library **and the devices** - each area type's members are its devices |
 | `32_Blocks` | block inventory, languages, numbers |
 | `33_SafetyBlocks` | certified ESTOP1 / SFDOOR / EV1oo2DI networks |
 | `34_Interlocks` | area interlock logic, the system summation, and the runtime wiring |
@@ -170,9 +169,9 @@ two devices onto one certified instance.
   network fact, it is applied to the controller, and the one-mask-per-IO-system rule catches
   a subnet the design never intended.
 
-> Named `20_Stations`, **not** a "Devices" tab: `22_Devices` already means field devices
-> (crash-off buttons, gates, detectors). Two tabs both called Device would give `DeviceID`
-> and `Device` two different meanings in a safety review.
+> Named `20_Stations`, **not** a "Devices" tab. A PROFINET IO-device and a field device
+> (crash-off button, gate, detector) are different things, and letting one word mean both
+> would give `DeviceID` two readings in a safety review.
 
 **`21_Modules`** - one row per plugged module.
 
@@ -205,17 +204,14 @@ two devices onto one certified instance.
 > hardware, 1oo2 in software via `EV1oo2DI`) is recorded once in `02_Decisions` D01; a
 > per-module column implied a check that never ran.
 
-**`22_Devices`** - one row per physical device.
-
-`DeviceID, Area, Device, DeviceType, UDT, Description, Location, DrawingRef, InInterlock, SF_ID, Verified, Notes`
-
-- `DeviceID` - stable primary key. `Device` - the name used in code and as the DB member,
-  unique within its area (it becomes a member of that area's generated UDT).
-- `DeviceType` enum (project-extensible): `SCB`, `EMO`, `KeySwitch`, `CSD`, `Gate`,
-  `RadDetector`, `KeyCache`, `Chain`, `Light`, `RF`.
-- `UDT` - the UDT that types this device's DB member; must exist in `30_UDTs`.
-- `InInterlock` (`Yes`/`No`) - declares trip-path relevance; cross-checked against
-  `34_Interlocks`.
+> **There is no devices tab (removed in v1.8).** A device *is* a member of its area's UDT,
+> so it is declared in `30_UDTs` as a row of `UDT_Area_<Area>` - the member name is the
+> device name, the datatype is its device UDT, and the comment describes it. A separate
+> tab could only repeat that, and would eventually disagree with it.
+>
+> **`DeviceID`** remains the key `23_Channels` and `34_Interlocks` join on, and is exactly
+> **`{Area}_{Member}`** (`BTA_SCB_SE0101`). The validator enforces that rather than leaving
+> it as a convention a reader has to infer.
 
 **`23_Channels`** - one row per physical channel. **The heart of the schema.**
 
@@ -261,6 +257,7 @@ two devices onto one certified instance.
 | Tab | Columns |
 |---|---|
 | `30_UDTs` | `UDT, Order, Member, Datatype, Comment, FailsafeCompliant` |
+| `31_Policy` | `PolicyID, UDT, Component, Order, Instruction, Version, DISCTIME, TIME_DEL, ACK_NEC, OPEN_NEC, AckSource, QTarget, Rationale, Verified` |
 | `32_Blocks` | `Block, Area, Layer, Language, Number, Description` |
 | `33_SafetyBlocks` | `RowID, DeviceID, Component, Instruction, Version, InstanceName, DISCTIME, TIME_DEL, ACK_NEC, OPEN_NEC, AckSource, QTarget, Verified, Notes` |
 | `34_Interlocks` | `Area, Target, DeviceID, Member, Include, Rationale, SF_ID` |
@@ -268,6 +265,27 @@ two devices onto one certified instance.
 
 - `30_UDTs.Datatype` - S7 primitive or a quoted UDT reference (`"UDT_SafeInput"`).
   `Order` fixes member order. Nested UDTs must be defined before use.
+
+**`30_UDTs` declares the devices too.** A type named by `10_Project.AreaUdtPattern`
+(`UDT_Area_<Area>`) is that area's contents: one member per device, plus the three area
+scalars. Nothing else declares a device.
+
+```
+UDT, Order, Member,        Datatype,        Comment
+UDT_Area_BTA, 1, IntGateA,      "UDT_Door",      internal gate A
+UDT_Area_BTA, 2, SCB_SE0101,    "UDT_SCB",       Sector 1 status control box
+UDT_Area_BTA, 9, Area_Reset,     Bool,           area acknowledge / reset
+UDT_Area_BTA,10, Interlocks_OK,  Bool,           all interlock contributors safe
+UDT_Area_BTA,11, Area_Safe,      Bool,           area safe summary
+```
+
+- The **member name is the device name** and becomes the DB member: `DB_SR_PPS.BTA.SCB_SE0101`.
+- The **datatype is the device's UDT**, and `31_Policy` keys on it to choose the certified
+  instruction chain.
+- `Area_Reset`, `Interlocks_OK` and `Area_Safe` are required on every area type. They are
+  referenced by `31_Policy.AckSource` and `34_Interlocks.Target`, and before v1.8 the build
+  appended them silently - a constant that no reader of the sheet could see.
+- An area with no devices still gets a type carrying just the three scalars.
 
 > **`FailsafeCompliant=Yes` restricts `Datatype` to `Bool`, `Int`, `DInt`, `Word`, `Time`**
 > (or a nested UDT that is itself F-compliant). Those are the only F-compliant elementary
@@ -307,11 +325,11 @@ Structural:
 3. Integer columns parse as integers.
 
 Referential:
-4. `23_Channels.DeviceID` -> `22_Devices.DeviceID`; `22_Devices.Area` -> `20_Stations.Area`;
+4. `23_Channels.DeviceID` -> a device (an area-UDT member, keyed `{Area}_{Member}`);
    `23_Channels.ModuleName` -> `21_Modules.ModuleName` within the same area.
-5. `22_Devices.UDT` -> `30_UDTs.UDT`; nested UDT datatypes resolve.
+5. Every area-UDT member's datatype resolves to a `30_UDTs.UDT`; nested types resolve.
 6. `33_SafetyBlocks.DeviceID`+`Component` -> an existing `23_Channels` component group.
-7. `34_Interlocks.DeviceID` -> `22_Devices.DeviceID`.
+7. `34_Interlocks.DeviceID` -> a device.
 
 Network:
 8. `IP_Address` is a dotted IPv4 quad; `IP_Address`, `Device_Number` and `Station_Name`
@@ -322,8 +340,9 @@ Safety:
 10. `(Area, Slot, Channel)` unique; the module exists in `21_Modules` for that area.
 11. `Paired=Yes` requires exactly one `ChA` and one `ChB` for that device+component;
     `Paired=No` requires exactly one `ChA` and is reported as **1oo1 needing review**.
-12. Every `22_Devices` row with `InInterlock=Yes` appears in `34_Interlocks` with
-    `Include=Yes`; every `Include=No` row has a non-empty `Rationale`.
+12. Every device that has channels appears in `34_Interlocks` - included, or excluded with
+    a non-empty `Rationale`. A device wired and evaluated but contributing to nothing is
+    the failure this catches, and silence is what it looks like.
 13. `Invert=Yes` channels are listed by name (each one negates a contact).
 14. `Verified=No` rows are reported; with `-RequireVerified` they are errors. On
     `23_Channels` this is the gate for signal sense - see `Invert`.
@@ -336,6 +355,16 @@ Exit code is non-zero on any error. Warnings do not fail the build but are print
 
 ## Schema history
 
+- **v1.8** - **`22_Devices` REMOVED; the area UDTs are authored.** Area types are declared
+  in `30_UDTs` like any other type instead of being invented by the build, which also makes
+  `Area_Reset` / `Interlocks_OK` / `Area_Safe` real rows - they were referenced by
+  `31_Policy.AckSource` and `34_Interlocks.Target` while being declared nowhere. `22_Devices`
+  is then redundant: a device *is* a member of its area's UDT, and that row already carries
+  the name, the type and the description. `31_Policy` drops `DeviceType` and keys on
+  **`UDT` + `Component`** - its `UDT` column previously held the *component's* type
+  (`UDT_SafeInput` on every row) and now holds the type of the device the rule applies to,
+  so a rule cannot match a device whose structure has nowhere to put the result. Interlock
+  coverage no longer keys off `InInterlock`; see rule 12.
 - **v1.7** - **the legacy / as-built record is retired.** `23_Channels.LegacyTagName`,
   `21_Modules.AsBuiltRail` and `20_Stations.Station_Label` REMOVED. None was read by the
   build: the first two were traceability against the system being replaced, and the third
