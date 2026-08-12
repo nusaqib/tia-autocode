@@ -401,6 +401,40 @@ function Invoke-TiaBuildFromSheet {
     $addr | Export-Csv -Path $ReportPath -NoTypeInformation -Encoding ASCII
     Write-Host ("addresses: {0} module rows -> {1}" -f $addr.Count, $ReportPath)
 
+    # InputBytes is DECLARED in the sheet but never used to compute an address - the build
+    # reads InputBase back from TIA, and only byte 0 of an F-DI carries channel values. So a
+    # wrong footprint produces a correct program and a wrong record, and nothing complains.
+    # TIA has just laid the rack out, so the gap to the next module's base IS the footprint:
+    # compare them here rather than maintaining a part-number table that would go stale.
+    $declBytes = @{}
+    foreach ($m in $model.Modules) { $declBytes["$($m.Area)/$($m.ModuleName)"] = $m }
+    $byArea = @{}
+    foreach ($a in $addr) {
+        if ([string]::IsNullOrWhiteSpace([string]$a.InputBase)) { continue }
+        if (-not $byArea.ContainsKey($a.Area)) { $byArea[$a.Area] = @() }
+        $byArea[$a.Area] += $a
+    }
+    $fpWarn = @()
+    foreach ($ar in $byArea.Keys) {
+        $list = @($byArea[$ar] | Sort-Object { [int]$_.InputBase })
+        for ($i = 0; $i -lt $list.Count - 1; $i++) {
+            $gap = [int]$list[$i+1].InputBase - [int]$list[$i].InputBase
+            if ($gap -le 0) { continue }        # not contiguous - says nothing about size
+            $row = $declBytes["$ar/$($list[$i].Module)"]
+            if (-not $row -or -not $row.InputBytes) { continue }
+            $decl = [int]$row.InputBytes
+            if ($decl -ne $gap) {
+                $fpWarn += ("  {0}/{1} ({2}): 21_Modules says InputBytes={3}, TIA laid it out {4} byte(s) wide" -f
+                            $ar, $list[$i].Module, $row.MLFB, $decl, $gap)
+            }
+        }
+    }
+    if ($fpWarn.Count) {
+        Write-Host ("  {0} module(s) declare an InputBytes that does not match the footprint TIA gave them:" -f $fpWarn.Count) -ForegroundColor Yellow
+        foreach ($w in $fpWarn) { Write-Host $w -ForegroundColor Yellow }
+        Write-Host "  Addresses are read back from TIA, so the program is unaffected - the DESIGN RECORD is wrong." -ForegroundColor Yellow
+    }
+
     if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
     } finally {
         # Always release the project. Leaving the Portal instance up holds a lock, and the
