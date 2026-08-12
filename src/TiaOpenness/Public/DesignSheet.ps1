@@ -99,6 +99,7 @@ function Sync-TiaDesignSheet {
         [string]$Path = '.\design',
         [string]$Workbook,
         [switch]$DiffOnly,
+        [switch]$Quiet,
         [string]$ApiKey
     )
     # .NET file APIs use the PROCESS working directory, which Set-Location does not
@@ -176,7 +177,7 @@ function Sync-TiaDesignSheet {
         $name = $tab.Name; $gid = [string]$tab.Value
         if ($bookMode) {
             if ($bookTabs -notcontains $name) {
-                Write-Host ("  {0,-18} MISSING in the sheet - skipped" -f $name) -ForegroundColor Yellow
+                if (-not $Quiet) { Write-Host ("  {0,-18} MISSING in the sheet - skipped" -f $name) -ForegroundColor Yellow }
                 continue
             }
             $rows = @(Import-TiaXlsx -Path $book -Sheet $name)
@@ -196,8 +197,10 @@ function Sync-TiaDesignSheet {
             }
             $sha = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($text)))).Hash
             $state[$name] = [ordered]@{ rows = $rows.Count; sha256 = $sha }
-            Write-Host ("  {0,-18} {1,4} rows {2}" -f $name, $rows.Count,
-                        $(if ($changed -contains $name) { 'CHANGED' } else { 'unchanged' }))
+            if (-not $Quiet) {
+                Write-Host ("  {0,-18} {1,4} rows {2}" -f $name, $rows.Count,
+                            $(if ($changed -contains $name) { 'CHANGED' } else { 'unchanged' }))
+            }
             continue
         }
         switch ($transport) {
@@ -279,7 +282,8 @@ function Test-TiaDesignSheet {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [switch]$RequireVerified
+        [switch]$RequireVerified,
+        [switch]$SkipWorkbookCheck
     )
     $errors = New-Object System.Collections.Generic.List[string]
     $warns  = New-Object System.Collections.Generic.List[string]
@@ -483,6 +487,33 @@ function Test-TiaDesignSheet {
         }
         if ($r.Instruction -eq 'EV1oo2DI' -and -not $r.DISCTIME) {
             $warns.Add("33_SafetyBlocks $($r.RowID): EV1oo2DI without DISCTIME - discrepancy time is a safety parameter")
+        }
+    }
+
+    # STALE SNAPSHOT GUARD. design/csv only changes when Sync runs, so an edited workbook
+    # that was never synced would build the OLD design silently - the exact failure the
+    # snapshot exists to prevent. Compare by CONTENT: the workbook's bytes change on every
+    # Excel save (zip timestamps), so a file hash would cry wolf on every save.
+    if (-not $SkipWorkbookCheck) {
+        $designDir = Split-Path -Parent $Path
+        if ($designDir -and (Test-Path $designDir)) {
+            $wb = @(Get-ChildItem -Path $designDir -Filter '*.xlsx' -File -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -notlike '~$*' })
+            if ($wb.Count -eq 1) {
+                try {
+                    $d = Sync-TiaDesignSheet -Path $designDir -DiffOnly -Quiet
+                    if ($d.Changed -and $d.Changed.Count) {
+                        # build the string first - a comma inside Add(...) binds to the
+                        # method call, not to -f, and would throw instead of reporting
+                        $msg = "STALE SNAPSHOT: $($wb[0].Name) has unsynced changes in " +
+                               "$($d.Changed -join ', ') - run Sync-TiaDesignSheet. " +
+                               "The build reads $(Split-Path -Leaf $Path), not the workbook."
+                        $errors.Add($msg)
+                    }
+                } catch {
+                    $warns.Add("could not compare $($wb[0].Name) against the snapshot: $($_.Exception.Message)")
+                }
+            }
         }
     }
 
