@@ -70,12 +70,67 @@ function Get-TiaSheetBlockNumber {
     $base = 500; $step = 10
     if ($Model.Project['BlockNumberBase']) { $base = [int]$Model.Project['BlockNumberBase'] }
     if ($Model.Project['BlockNumberStep']) { $step = [int]$Model.Project['BlockNumberStep'] }
+    $offset = @{ 'Data' = 0; 'IOMap' = 1; 'Certified' = 2; 'Safety' = 3 }[$Layer]
+    if ($null -eq $offset) { $offset = 4 }
+    # System-wide block (v1.4): one block per layer, no area index to add.
+    if (-not $Area) { return $base + $offset }
     $areas = @($Model.Stations | ForEach-Object { $_.Area })
     $i = [array]::IndexOf($areas, $Area)
     if ($i -lt 0) { throw "Area '$Area' is not in 20_Stations." }
-    $offset = @{ 'Data' = 0; 'IOMap' = 1; 'Certified' = 2; 'Safety' = 3 }[$Layer]
-    if ($null -eq $offset) { $offset = 4 }
     $base + ($i * $step) + $offset
+}
+
+function Get-TiaSheetAreaUdtRows {
+    <#
+    .SYNOPSIS
+        Build the generated Area UDTs: one type per area, one member per device.
+    .DESCRIPTION
+        v1.4 replaces the 16 per-area F-DBs with 16 generated UDTs instantiated in one
+        system F-DB. These rows are shaped exactly like 30_UDTs rows so they flow through
+        the same ordering, F-compliance check and XML emitter as the authored types.
+
+        They are DERIVED from 22_Devices and never authored: an area's contents are the
+        devices assigned to it, and a hand-maintained copy of that list would be a second
+        source of truth that silently goes stale as devices move.
+
+        Every area also carries Area_Reset / Interlocks_OK / Area_Safe. The certified calls
+        acknowledge against Area_Reset and the safety layer writes the other two, so without
+        them every ACK pin compiles to "Tag ... not defined".
+    #>
+    param($Model)
+    $pattern = $Model.Project['AreaUdtPattern']
+    if (-not $pattern) { $pattern = 'UDT_Area_{Area}' }
+    $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
+
+    $rows = @()
+    foreach ($z in $Model.Stations) {
+        $devs = @($Model.DevicesByArea[$z.Area])
+        if (-not $devs.Count) { continue }
+        $name = Expand-TiaSheetPattern -Pattern $pattern -Values @{ Area = $z.Area }
+        $order = 1; $seen = @{}
+        foreach ($d in ($devs | Sort-Object Device)) {
+            if (-not $d.UDT) { throw "22_Devices $($d.DeviceID): no UDT" }
+            if ($udtNames -notcontains $d.UDT) { throw "22_Devices $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
+            if ($seen.ContainsKey($d.Device)) {
+                throw ("22_Devices: area $($z.Area) has two devices named '$($d.Device)' " +
+                       "($($seen[$d.Device]) and $($d.DeviceID)) - they would collide as members of $name")
+            }
+            $seen[$d.Device] = $d.DeviceID
+            $rows += [pscustomobject]@{ UDT = $name; Order = $order; Member = $d.Device
+                                        Datatype = $d.UDT; Comment = $d.Description; FailsafeCompliant = 'Yes' }
+            $order++
+        }
+        foreach ($m in @(
+            @{ n = 'Area_Reset';    c = 'area acknowledge / reset (supervised source)' },
+            @{ n = 'Interlocks_OK'; c = 'all interlock contributors safe' },
+            @{ n = 'Area_Safe';     c = 'area safe summary' })) {
+            if ($seen.ContainsKey($m.n)) { continue }
+            $rows += [pscustomobject]@{ UDT = $name; Order = $order; Member = $m.n
+                                        Datatype = 'Bool'; Comment = $m.c; FailsafeCompliant = 'Yes' }
+            $order++
+        }
+    }
+    $rows
 }
 
 function Get-TiaSheetChannelPlan {
@@ -98,7 +153,18 @@ function Get-TiaSheetChannelPlan {
     foreach ($r in (Import-Csv $AddressMapPath)) { $addr["$($r.Area)/$($r.Module)"] = $r }
 
     $tagPattern = $Model.Project['TagPattern']
-    if (-not $tagPattern) { $tagPattern = 'PPS_{Area}_{DeviceRef}_{Component}_{Signal}' }
+    if (-not $tagPattern) { $tagPattern = '{InputType}SRPPS_{Area}_{Device}_{Component}_{Signal}' }
+
+    # {InputType} states a channel's safety class (fi/fo/ni/no) and comes from the Kind of
+    # the module it is wired to - never from the sheet, where it could disagree with the rack.
+    $modKind = @{}
+    foreach ($m in $Model.Modules) { $modKind["$($m.Area)/$($m.ModuleName)"] = $m.Kind }
+
+    # Every member path is rooted at the ONE system F-DB, with the area as the first level:
+    # DB_SR_PPS.BTA.SE0101.EMO.ChA. Callers use .Db as that root, so an area-level member is
+    # "$Db.Interlocks_OK" exactly as it was when each area had its own DB.
+    $dbName = $Model.Project['DbPattern']
+    if (-not $dbName) { $dbName = 'DB_SR_PPS' }
 
     # The Component level exists in the DB path ONLY when the device's UDT actually nests
     # it (UDT_SCB has EMO/KeySwitch members; a plain UDT_SafeInput has ChA/ChB directly).
@@ -127,14 +193,21 @@ function Get-TiaSheetChannelPlan {
         $nests = ($d.UDT -and $udtMembers.ContainsKey($d.UDT) -and
                   $c.Component -and $udtMembers[$d.UDT].ContainsKey($c.Component))
         $comp = if ($nests) { $c.Component } else { '' }
+        $itype = Get-TiaModuleInputType -Kind $modKind[$key]
+        if (-not $itype) {
+            $problems += "23_Channels $($c.ChannelID): module $key has Kind '$($modKind[$key])' - no fi/fo/ni/no class for the tag name"
+            continue
+        }
         $plan += [pscustomobject]@{
             ChannelID = $c.ChannelID
             Area      = $d.Area
             TagName   = (Expand-TiaSheetPattern -Pattern $tagPattern -Values @{
-                            Area = $d.Area; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal })
+                            InputType = $itype; Area = $d.Area; Device = $d.Device
+                            Component = $c.Component; Signal = $c.Signal })
             Address   = "%I$([int]$base).$bit"
-            Member    = (@($d.DeviceRef, $comp, $c.Signal) | Where-Object { $_ }) -join '.'
-            Db        = (Expand-TiaSheetPattern -Pattern $(if ($Model.Project['DbPattern']) { $Model.Project['DbPattern'] } else { 'DB_{Area}' }) -Values @{ Area = $d.Area })
+            Member    = (@($d.Device, $comp, $c.Signal) | Where-Object { $_ }) -join '.'
+            Db        = "$dbName.$($d.Area)"
+            InputType = $itype
             Invert    = $(if ($c.Invert -eq 'Yes') { 'Yes' } else { 'No' })
             Verified  = $c.Verified
             Paired    = $c.Paired
@@ -247,13 +320,15 @@ function Invoke-TiaSheetIOMapPhase {
     }
 
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Layer}' }
 
-    $built = @(); $nets = 0
+    # ONE block for the whole system (v1.4), networks grouped by area so the block still
+    # reads area by area.
+    $units = @(); $id = 3; $nets = 0; $perArea = @()
     foreach ($z in $Model.Stations) {
         $rows = @($plan | Where-Object { $_.Area -eq $z.Area })
         if (-not $rows.Count) { continue }
-        $units = @(); $id = 3
+        $n0 = $nets
         foreach ($g in ($rows | Group-Object DeviceID, Component)) {
             $b = New-TiaFlgBuilder
             foreach ($r in ($g.Group | Sort-Object Signal)) {
@@ -262,24 +337,25 @@ function Invoke-TiaSheetIOMapPhase {
                 Add-TiaFlgRung -Builder $b -From $r.TagName -To "$($r.Db).$($r.Member)" `
                                -Negated:($r.Invert -eq 'Yes') | Out-Null
             }
-            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title ($g.Group[0].Member -split '\.')[0])
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title ("{0} {1}" -f $z.Area, ($g.Group[0].Member -split '\.')[0]))
             $id += 5
             $nets++
         }
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'IOMap' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'IOMap'
-        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
-        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num; Networks = $units.Count }
+        $perArea += [pscustomobject]@{ Area = $z.Area; Networks = ($nets - $n0) }
     }
-    Write-Host ("iomap: {0} block(s), {1} network(s), {2} rung(s)" -f $built.Count, $nets, $plan.Count)
+    $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Layer = 'IOMap' }
+    $num  = Get-TiaSheetBlockNumber -Model $Model -Area '' -Layer 'IOMap'
+    $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
+    Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+    $built = @([pscustomobject]@{ Name = $name; Number = $num; Networks = $units.Count })
+    Write-Host ("iomap: {0} FB{1}, {2} network(s), {3} rung(s)" -f $name, $num, $nets, $plan.Count)
+    foreach ($a in $perArea) { Write-Host ("  {0,-10} {1,3} networks" -f $a.Area, $a.Networks) }
 
     $cErr = 0; $compile = $null
     $null = Open-TiaSheetProject -ProjectPath $ProjectPath
     try {
         foreach ($b in $built) {
             Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
-            Write-Host ("  {0,-18} FB{1,-4} {2,2} networks" -f $b.Name, $b.Number, $b.Networks)
         }
         $plc = Get-TiaPlc | Select-Object -First 1
         $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
@@ -328,8 +404,11 @@ function Get-TiaSheetCertifiedPlan {
         $groups[$k] += $c
     }
 
+    # With one Certified block for the whole system, an instance name must be unique across
+    # ALL areas - Device is only unique within its area (CH10 exists in MCR and in BTA), so
+    # {Area} has to be in the pattern or 149 statics collide down to a handful.
     $instPattern = $Model.Project['InstancePattern']
-    if (-not $instPattern) { $instPattern = 'Inst_{DeviceRef}_{Component}_{Instruction}' }
+    if (-not $instPattern) { $instPattern = 'Inst_{Area}_{Device}_{Component}_{Instruction}' }
 
     $plan = @(); $missing = @()
     foreach ($k in ($groups.Keys | Sort-Object)) {
@@ -352,16 +431,16 @@ function Get-TiaSheetCertifiedPlan {
             }
             $inst = if ($r.InstanceName) { $r.InstanceName } else {
                 Expand-TiaSheetPattern -Pattern $instPattern -Values @{
-                    Area = $d.Area; DeviceRef = $d.DeviceRef; Component = $comp; Instruction = $r.Instruction } }
+                    Area = $d.Area; Device = $d.Device; Component = $comp; Instruction = $r.Instruction } }
             $plan += [pscustomobject]@{
-                Area = $d.Area; DeviceID = $did; DeviceRef = $d.DeviceRef; Component = $comp
+                Area = $d.Area; DeviceID = $did; Device = $d.Device; Component = $comp
                 Instruction = $r.Instruction; Version = $r.Version; Instance = $inst
                 Order = [int]$r.Order
                 ChA = $(if ($chA) { "$($rows[0].Db).$($chA.Member)" }); ChB = $(if ($chB) { "$($rows[0].Db).$($chB.Member)" })
                 Stem = $dbStem
                 AckSource = $(if ($r.AckSource) { Expand-TiaSheetPattern -Pattern $r.AckSource -Values @{ Db = $rows[0].Db; Area = $d.Area } })
                 QTarget = $(if ($r.QTarget) { Expand-TiaSheetPattern -Pattern $r.QTarget -Values @{
-                                Db = $rows[0].Db; Device = $d.DeviceRef; Component = $comp; Area = $d.Area } })
+                                Db = $rows[0].Db; Device = $d.Device; Component = $comp; Area = $d.Area } })
             }
         }
     }
@@ -388,13 +467,14 @@ function Invoke-TiaSheetCertifiedPhase {
     $chan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
     $plan = Get-TiaSheetCertifiedPlan -Model $Model -ChannelPlan $chan
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Layer}' }
 
-    $built = @()
+    # ONE Certified block for the whole system, networks grouped by area.
+    $units = @(); $statics = @(); $id = 3; $perArea = @()
     foreach ($z in $Model.Stations) {
         $rows = @($plan | Where-Object { $_.Area -eq $z.Area })
         if (-not $rows.Count) { continue }
-        $units = @(); $statics = @(); $id = 3
+        $n0 = $units.Count; $s0 = $statics.Count
         foreach ($g in ($rows | Group-Object DeviceID, Component)) {
             $b = New-TiaFlgBuilder
             $prev1oo2 = $false
@@ -419,23 +499,32 @@ function Invoke-TiaSheetCertifiedPhase {
                 Add-TiaFlgCertifiedCall -Builder $b -Instruction $r.Instruction -InstanceName $r.Instance `
                                         -Inputs $in -Outputs $out -Version $r.Version | Out-Null
             }
-            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($g.Group[0].DeviceRef).$($g.Group[0].Component)")
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) $($g.Group[0].Device).$($g.Group[0].Component)")
             $id += 5
         }
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'Certified' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Certified'
-        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units -Statics $statics
-        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num; Networks = $units.Count; Instances = $statics.Count }
+        $perArea += [pscustomobject]@{ Area = $z.Area; Networks = ($units.Count - $n0); Instances = ($statics.Count - $s0) }
     }
-    Write-Host ("certified: {0} block(s), {1} instruction call(s)" -f $built.Count, $plan.Count)
+    $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Layer = 'Certified' }
+    $num  = Get-TiaSheetBlockNumber -Model $Model -Area '' -Layer 'Certified'
+    $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units -Statics $statics
+    Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+    $built = @([pscustomobject]@{ Name = $name; Number = $num; Networks = $units.Count; Instances = $statics.Count })
+
+    # A duplicate static would silently merge two devices onto one certified instance.
+    $dupes = @($statics | Group-Object Name | Where-Object { $_.Count -gt 1 })
+    if ($dupes.Count) {
+        foreach ($d in $dupes) { Write-Host "  duplicate instance '$($d.Name)' x$($d.Count)" -ForegroundColor Red }
+        throw ("InstancePattern produces $($dupes.Count) duplicate instance name(s) across the system - " +
+               "include {Area} in 10_Project.InstancePattern.")
+    }
+    Write-Host ("certified: {0} FB{1}, {2} network(s), {3} instruction call(s)" -f $name, $num, $units.Count, $plan.Count)
+    foreach ($a in $perArea) { Write-Host ("  {0,-10} {1,3} networks {2,4} instances" -f $a.Area, $a.Networks, $a.Instances) }
 
     $cErr = 0; $compile = $null
     $null = Open-TiaSheetProject -ProjectPath $ProjectPath
     try {
         foreach ($b in $built) {
             Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
-            Write-Host ("  {0,-22} FB{1,-4} {2,2} networks {3,3} instances" -f $b.Name, $b.Number, $b.Networks, $b.Instances)
         }
         $plc = Get-TiaPlc | Select-Object -First 1
         $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
@@ -482,24 +571,25 @@ function Invoke-TiaSheetSafetyPhase {
     }
 
     $fbPattern = $Model.Project['BlockPattern']
-    if (-not $fbPattern) { $fbPattern = 'FB_{Area}_{Layer}' }
-    $dbPattern = $Model.Project['DbPattern']
-    if (-not $dbPattern) { $dbPattern = 'DB_{Area}' }
+    if (-not $fbPattern) { $fbPattern = 'FB_{Layer}' }
+    $dbName = $Model.Project['DbPattern']
+    if (-not $dbName) { $dbName = 'DB_SR_PPS' }
 
-    $built = @(); $skippedAreas = @()
+    # ONE Interlocks block for the whole system: per-device summaries, then each area's AND,
+    # then the system AND.
+    $units = @(); $id = 3; $skippedAreas = @(); $perArea = @(); $areaSafes = @()
     foreach ($z in $Model.Stations) {
-        $db = Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Area = $z.Area }
-        $units = @(); $id = 3
+        $db = "$dbName.$($z.Area)"
 
         # one network per device: AND its components' terminal results into Device_Safe
         $areaDevs = @()
-        foreach ($d in @($Model.DevicesByArea[$z.Area] | Sort-Object DeviceRef)) {
+        foreach ($d in @($Model.DevicesByArea[$z.Area] | Sort-Object Device)) {
             $comps = @($terminal.Keys | Where-Object { $_ -like "$($d.DeviceID)|*" })
             if (-not $comps.Count) { continue }
             $srcs = @($comps | Sort-Object | ForEach-Object { $terminal[$_] })
             $b = New-TiaFlgBuilder
-            Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.DeviceRef).Device_Safe") | Out-Null
-            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($d.DeviceRef) Device_Safe")
+            Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.Device).Device_Safe") | Out-Null
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) $($d.Device) Device_Safe")
             $id += 5
             $areaDevs += $d
         }
@@ -511,44 +601,52 @@ function Invoke-TiaSheetSafetyPhase {
             $d = $Model.DeviceById[$i.DeviceID]
             if (-not $d) { continue }
             if ($areaDevs -notcontains $d) { continue }   # no certified result to contribute
-            $members += "$db.$($d.DeviceRef).Device_Safe"
+            $members += "$db.$($d.Device).Device_Safe"
         }
         if (-not $members.Count) { $skippedAreas += $z.Area; continue }
         $b = New-TiaFlgBuilder
         Add-TiaFlgSeriesRung -Builder $b -From $members -To @("$db.Interlocks_OK", "$db.Area_Safe") | Out-Null
         $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) Interlocks_OK")
-
-        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $z.Area; Layer = 'Safety' }
-        $num  = Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Safety'
-        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
-        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
-        $built += [pscustomobject]@{ Area = $z.Area; Name = $name; Number = $num
-                                     Devices = $areaDevs.Count; Contributors = $members.Count }
+        $id += 5
+        $areaSafes += "$db.Area_Safe"
+        $perArea += [pscustomobject]@{ Area = $z.Area; Devices = $areaDevs.Count; Contributors = $members.Count }
     }
+    if (-not $perArea.Count) { throw "34_Interlocks produced no contributors - nothing to summate." }
 
-    # the safety runtime: one network per area calling IOMap -> Certified -> Safety
+    # the system summation: every area safe
+    $b = New-TiaFlgBuilder
+    Add-TiaFlgSeriesRung -Builder $b -From $areaSafes -To @("$dbName.System_Safe") | Out-Null
+    $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title 'System_Safe')
+
+    $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Layer = 'Safety' }
+    $num  = Get-TiaSheetBlockNumber -Model $Model -Area '' -Layer 'Safety'
+    $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
+    Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+    $built = @([pscustomobject]@{ Name = $name; Number = $num; Networks = $units.Count })
+
+    # the safety runtime: IOMap -> Certified -> Interlocks, once, in that order
     $rtName = $Model.Project['SafetyRuntimeFB']
     if (-not $rtName) { $rtName = 'Main_Safety_RTG1' }
-    $rtUnits = @(); $rtStatics = @(); $rid = 3
-    foreach ($b in $built) {
-        $bu = New-TiaFlgBuilder
-        foreach ($layer in @('IOMap','Certified','Safety')) {
-            $blk = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Area = $b.Area; Layer = $layer }
-            $inst = "${blk}_Instance"
-            $rtStatics += [pscustomobject]@{ Name = $inst; Datatype = $blk; Block = $true }
-            Add-TiaFlgCall -Builder $bu -Block $blk -InstanceName $inst | Out-Null
-        }
-        $rtUnits += (New-TiaFlgCompileUnit -Builder $bu -Id $rid -Title "$($b.Area)")
-        $rid += 5
+    $rtUnits = @(); $rtStatics = @()
+    $bu = New-TiaFlgBuilder
+    foreach ($layer in @('IOMap','Certified','Safety')) {
+        $blk = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Layer = $layer }
+        $inst = "${blk}_Instance"
+        $rtStatics += [pscustomobject]@{ Name = $inst; Datatype = $blk; Block = $true }
+        Add-TiaFlgCall -Builder $bu -Block $blk -InstanceName $inst | Out-Null
     }
+    $rtUnits += (New-TiaFlgCompileUnit -Builder $bu -Id 3 -Title 'SR_PPS')
     $rtNum = 1
     $rtRow = @($Model.Blocks | Where-Object { $_.Layer -eq 'Runtime' }) | Select-Object -First 1
     if ($rtRow -and $rtRow.Number) { $rtNum = [int]$rtRow.Number }
     $rtXml = New-TiaFailsafeFbXml -Name $rtName -Number $rtNum -CompileUnits $rtUnits -Statics $rtStatics
     Save-TiaMlDocument -Path (Join-Path $XmlDir "$rtName.xml") -Xml $rtXml | Out-Null
 
-    Write-Host ("safety: {0} area block(s), runtime '{1}' calling {2} block(s)" -f
-                $built.Count, $rtName, $rtStatics.Count)
+    Write-Host ("interlocks: {0} FB{1}, {2} network(s); runtime '{3}' calls {4} block(s)" -f
+                $name, $num, $units.Count, $rtName, $rtStatics.Count)
+    foreach ($a in $perArea) {
+        Write-Host ("  {0,-10} {1,3} devices, {2,3} interlock contributors" -f $a.Area, $a.Devices, $a.Contributors)
+    }
     if ($skippedAreas.Count) {
         Write-Host ("  areas with no interlock contributors: {0}" -f ($skippedAreas -join ', ')) -ForegroundColor Yellow
     }
@@ -558,8 +656,6 @@ function Invoke-TiaSheetSafetyPhase {
     try {
         foreach ($b in $built) {
             Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
-            Write-Host ("  {0,-20} FB{1,-4} {2,2} devices, {3,2} interlock contributors" -f
-                        $b.Name, $b.Number, $b.Devices, $b.Contributors)
         }
         Import-TiaBlockXml -Path (Join-Path $XmlDir "$rtName.xml") -Overwrite | Out-Null
         Write-Host ("  {0,-20} FB{1}" -f $rtName, $rtNum)
@@ -574,9 +670,10 @@ function Invoke-TiaSheetSafetyPhase {
     }
 
     [pscustomobject]@{
-        Ok = ($cErr -eq 0); Phase = 'Safety'; ProjectPath = $ProjectPath
+        Ok = ($cErr -eq 0); Phase = 'Interlocks'; ProjectPath = $ProjectPath
         Blocks = @($built | ForEach-Object { $_.Name }); Runtime = $rtName
-        Contributors = (@($built | ForEach-Object { $_.Contributors }) | Measure-Object -Sum).Sum
+        Areas = $perArea.Count
+        Contributors = (@($perArea | ForEach-Object { $_.Contributors }) | Measure-Object -Sum).Sum
         CompileState = [string]$compile.State; CompileErrors = $cErr
     }
 }
@@ -584,74 +681,57 @@ function Invoke-TiaSheetSafetyPhase {
 function Invoke-TiaSheetDataPhase {
     <#
     .SYNOPSIS
-        Phase 3 (Data): one formal F-DB per area, one member per device.
+        Phase 3 (Data): ONE system F-DB holding every area as a typed member.
     .DESCRIPTION
-        In  : 22_Devices (DeviceID, Area, DeviceRef, UDT), 30_UDTs, 32_Blocks
-        Out : DB_<area> as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB
+        In  : 22_Devices (DeviceID, Area, Device, UDT), 30_UDTs, 32_Blocks
+        Out : DB_SR_PPS as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB, one member per
+              area typed by that area's generated UDT (phase 2).
         Emitted as XML because ProgrammingLanguage=F_DB cannot be set from SCL - an
         SCL-created DB is an ordinary DB and the safety program will not accept it.
+
+        The area UDT is what makes one DB workable: the whole system is browsable in one
+        place, and a member path still reads DB_SR_PPS.BTA.SE0101.EMO.ChA.
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [switch]$Save)
 
-    $dbPattern = $Model.Project['DbPattern']
-    if (-not $dbPattern) { $dbPattern = 'DB_{Area}' }
-    $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
+    $dbName = $Model.Project['DbPattern']
+    if (-not $dbName) { $dbName = 'DB_SR_PPS' }
+    $areaPattern = $Model.Project['AreaUdtPattern']
+    if (-not $areaPattern) { $areaPattern = 'UDT_Area_{Area}' }
 
-    $plan = @()
+    # Reuse the same generator phase 2 created the types from, so the DB cannot instantiate
+    # an area type that was never built (or miss one that was).
+    $areaRows = @(Get-TiaSheetAreaUdtRows -Model $Model)
+    $areaUdts = @($areaRows | ForEach-Object { $_.UDT } | Select-Object -Unique)
+
+    $members = @(); $devTotal = 0
     foreach ($z in $Model.Stations) {
-        $devs = @($Model.DevicesByArea[$z.Area])
-        if (-not $devs.Count) { Write-Host "  $($z.Area): no devices - skipped"; continue }
-        $members = @()
-        $seen = @{}
-        foreach ($d in ($devs | Sort-Object DeviceRef)) {
-            if (-not $d.UDT) { throw "22_Devices $($d.DeviceID): no UDT" }
-            if ($udtNames -notcontains $d.UDT) { throw "22_Devices $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
-            $nm = $d.DeviceRef
-            if ($seen.ContainsKey($nm)) {
-                throw ("22_Devices: area $($z.Area) has two devices with DeviceRef '$nm' " +
-                       "($($seen[$nm]) and $($d.DeviceID)) - they would collide as DB members")
-            }
-            $seen[$nm] = $d.DeviceID
-            $members += [pscustomobject]@{ Name = $nm; Datatype = $d.UDT; Comment = $d.Description }
-        }
-        # Area-level members. The certified calls acknowledge against Area_Reset and the
-        # safety layer writes Interlocks_OK / Area_Safe, so without these every ACK pin
-        # compiles to "Tag DB_<area>.Area_Reset not defined".
-        foreach ($zm in @(
-            @{ n = 'Area_Reset';    c = 'area acknowledge / reset (supervised source)' },
-            @{ n = 'Interlocks_OK'; c = 'all interlock contributors safe' },
-            @{ n = 'Area_Safe';     c = 'area safe summary' })) {
-            if (-not $seen.ContainsKey($zm.n)) {
-                $members += [pscustomobject]@{ Name = $zm.n; Datatype = 'Bool'; Comment = $zm.c }
-            }
-        }
-        $plan += [pscustomobject]@{
-            Area = $z.Area
-            Name = (Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Area = $z.Area })
-            Number = (Get-TiaSheetBlockNumber -Model $Model -Area $z.Area -Layer 'Data')
-            Members = $members
-        }
+        $u = Expand-TiaSheetPattern -Pattern $areaPattern -Values @{ Area = $z.Area }
+        if ($areaUdts -notcontains $u) { Write-Host "  $($z.Area): no devices - skipped"; continue }
+        $n = @($Model.DevicesByArea[$z.Area]).Count
+        $devTotal += $n
+        $members += [pscustomobject]@{ Name = $z.Area; Datatype = $u
+                                       Comment = "$($z.Name) - $n device(s)" }
     }
-    if (-not $plan.Count) { throw "22_Devices produced no DB members." }
+    if (-not $members.Count) { throw "22_Devices produced no DB members." }
 
+    # System-level summary, computed by the safety phase from every area's Area_Safe.
+    $members += [pscustomobject]@{ Name = 'System_Safe'; Datatype = 'Bool'
+                                   Comment = 'every area safe (AND of Area_Safe)' }
+
+    $number = Get-TiaSheetBlockNumber -Model $Model -Area '' -Layer 'Data'
     if (-not $XmlDir) { $XmlDir = Join-Path ([IO.Path]::GetTempPath()) ("tia-fdb-" + [guid]::NewGuid().ToString('n')) }
-    $files = @()
-    foreach ($p in $plan) {
-        $xml = New-TiaFailsafeDbXml -Name $p.Name -Number $p.Number -Members $p.Members
-        $files += (Save-TiaMlDocument -Path (Join-Path $XmlDir "$($p.Name).xml") -Xml $xml)
-    }
-    Write-Host ("data: {0} F-DB(s), {1} member(s) -> {2}" -f $plan.Count,
-                (@($plan | ForEach-Object { $_.Members.Count }) | Measure-Object -Sum).Sum, $XmlDir)
+    $xml = New-TiaFailsafeDbXml -Name $dbName -Number $number -Members $members
+    Save-TiaMlDocument -Path (Join-Path $XmlDir "$dbName.xml") -Xml $xml | Out-Null
+    Write-Host ("data: {0} DB{1} with {2} area member(s) over {3} device(s) -> {4}" -f
+                $dbName, $number, ($members.Count - 1), $devTotal, $XmlDir)
 
     $imported = @(); $cErr = 0; $compile = $null
     $null = Open-TiaSheetProject -ProjectPath $ProjectPath
     try {
-        foreach ($p in $plan) {
-            $f = Join-Path $XmlDir "$($p.Name).xml"
-            Import-TiaBlockXml -Path $f -Overwrite | Out-Null
-            $imported += $p.Name
-            Write-Host ("  {0,-12} DB{1,-4} {2,2} members" -f $p.Name, $p.Number, $p.Members.Count)
-        }
+        Import-TiaBlockXml -Path (Join-Path $XmlDir "$dbName.xml") -Overwrite | Out-Null
+        $imported += $dbName
+        foreach ($m in $members) { Write-Host ("  {0,-14} {1}" -f $m.Name, $m.Datatype) }
         $plc = Get-TiaPlc | Select-Object -First 1
         $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
         try { $cErr = $compile.Errors } catch { }
@@ -680,8 +760,13 @@ function Invoke-TiaSheetTypePhase {
     #>
     param($Model, [string]$ProjectPath, [string]$XmlDir, [switch]$Save)
 
-    $rows = @($Model.Udts)
-    if (-not $rows.Count) { throw "30_UDTs is empty - nothing to create." }
+    $authored = @($Model.Udts)
+    if (-not $authored.Count) { throw "30_UDTs is empty - nothing to create." }
+    # The generated Area UDTs join the authored ones here so they share the dependency
+    # ordering and the F-compliance check - an area type nests device types, so it must be
+    # created after them, and Get-TiaUdtBuildOrder is what knows that.
+    $areaRows = @(Get-TiaSheetAreaUdtRows -Model $Model)
+    $rows = $authored + $areaRows
 
     $names = @($rows | ForEach-Object { $_.UDT } | Select-Object -Unique)
     $bad = @()
@@ -699,7 +784,10 @@ function Invoke-TiaSheetTypePhase {
 
     if (-not $XmlDir) { $XmlDir = Join-Path ([IO.Path]::GetTempPath()) ('tia-udt-' + [guid]::NewGuid().ToString('n')) }
     $order = Get-TiaUdtBuildOrder -Rows $rows
-    Write-Host ("types: {0} UDT(s), creation order: {1}" -f $order.Count, ($order -join ' -> '))
+    Write-Host ("types: {0} UDT(s) = {1} authored + {2} generated area type(s)" -f $order.Count,
+                @($authored | ForEach-Object { $_.UDT } | Select-Object -Unique).Count,
+                @($areaRows | ForEach-Object { $_.UDT } | Select-Object -Unique).Count)
+    Write-Host ("  creation order: {0}" -f ($order -join ' -> '))
 
     $created = @(); $skipped = @(); $compile = $null; $cErr = 0
     $null = Open-TiaSheetProject -ProjectPath $ProjectPath

@@ -8,13 +8,22 @@ function Invoke-TiaBuildFromSheet {
     .SYNOPSIS
         Build a TIA Portal project from a design-sheet CSV snapshot.
     .DESCRIPTION
-        Phase 'Hardware' creates the project, the CPU, one station per area, plugs every
-        module at its designed slot, wires one PROFINET subnet + IO system, compiles, and
-        reports the assigned I/O addresses.
+        Phases, in dependency order - each one's output is the next one's input:
+
+          Project     the project file and the CPU
+          Hardware    one station per area, every module at its slot, one PROFINET subnet
+                      + IO system, the as-built labels, and the assigned-address read-back
+          UDTs        the authored device types plus one GENERATED type per area
+          DB          one system F-DB with every area as a typed member
+          Tags        one PLC tag per channel at its live address
+          IOMap       FB_IOMap  - every channel copied into its DB member
+          Certified   FB_Certified - ESTOP1 / SFDOOR / EV1oo2DI per 31_Policy
+          Interlocks  FB_Safety - device summaries, area ANDs, the system AND, and the
+                      safety runtime that calls the three blocks
 
         Validation gate, deliberately asymmetric:
-          Hardware  runs Test-TiaDesignSheet and needs -Force to proceed past unrelated
-                    design errors, but ALWAYS refuses if the hardware rows themselves are
+          Project/Hardware  run Test-TiaDesignSheet and need -Force to proceed past
+                    unrelated design errors, but ALWAYS refuse if their own rows are
                     incomplete. Racks and modules are inert - a wrong one does not trip.
           Logic     refuses outright unless validation is clean. Certified safety logic is
                     never generated from a design that does not validate, and -Force does
@@ -40,7 +49,7 @@ function Invoke-TiaBuildFromSheet {
     param(
         [string]$Path = '.\design\csv',
         [string]$ProjectPath,
-        [ValidateSet('Hardware','Types','Data','Tags','IOMap','Certified','Safety')][string]$Phase = 'Hardware',
+        [ValidateSet('Project','Hardware','UDTs','DB','Tags','IOMap','Certified','Interlocks')][string]$Phase = 'Project',
         [switch]$Force,
         [switch]$Save,
         [switch]$RequireVerified,
@@ -56,13 +65,15 @@ function Invoke-TiaBuildFromSheet {
     # row must not block UDT creation, which never reads that tab.
     # Anything global (stale snapshot, schema failure) blocks every phase.
     $phaseTabs = @{
-        'Hardware'  = @('10_Project','20_Stations','21_Modules')
-        'Types'     = @('30_UDTs')
-        'Data'      = @('22_Devices','30_UDTs','32_Blocks')
-        'Tags'      = @('23_Channels','21_Modules')
-        'IOMap'     = @('23_Channels','22_Devices')
-        'Certified' = @('31_Policy','33_SafetyBlocks','22_Devices','23_Channels')
-        'Safety'    = @('34_Interlocks','22_Devices')
+        'Project'    = @('10_Project')
+        'Hardware'   = @('10_Project','20_Stations','21_Modules')
+        # UDTs reads 22_Devices too: the Area UDTs are generated from the device list.
+        'UDTs'       = @('30_UDTs','22_Devices')
+        'DB'         = @('22_Devices','30_UDTs','32_Blocks')
+        'Tags'       = @('23_Channels','21_Modules')
+        'IOMap'      = @('23_Channels','22_Devices')
+        'Certified'  = @('31_Policy','33_SafetyBlocks','22_Devices','23_Channels')
+        'Interlocks' = @('34_Interlocks','22_Devices')
     }
     $allTabs = @('10_Project','20_Stations','21_Modules','22_Devices','23_Channels','30_UDTs',
                  '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
@@ -82,16 +93,16 @@ function Invoke-TiaBuildFromSheet {
     if ($mine.Count) {
         Write-Host "  $($mine.Count) design error(s) in phase '$Phase' inputs:" -ForegroundColor Yellow
         foreach ($e in $mine) { Write-Host "    $e" -ForegroundColor Yellow }
-        # Racks are inert, so hardware may be forced past its own errors. Everything that
-        # ends up in the trip path may not - and -Force does not override that.
-        if ($Phase -ne 'Hardware') {
+        # Racks are inert, so Project/Hardware may be forced past their own errors.
+        # Everything that ends up in the trip path may not - and -Force does not override it.
+        if (@('Project','Hardware') -notcontains $Phase) {
             throw "Design errors in phase '$Phase' inputs - it will not run. -Force does not override this."
         }
         if (-not $Force) {
-            throw ("Design does not validate. Fix it, or re-run with -Force to build HARDWARE " +
-                   "only from the verified rack rows.")
+            throw ("Design does not validate. Fix it, or re-run with -Force to build the " +
+                   "$Phase phase only from the verified rows.")
         }
-        Write-Host "  -Force: continuing with the hardware phase only" -ForegroundColor Yellow
+        Write-Host "  -Force: continuing with the '$Phase' phase only" -ForegroundColor Yellow
     }
 
     $model = Read-TiaSheetModel -Path $Path
@@ -101,57 +112,45 @@ function Invoke-TiaBuildFromSheet {
     # one repo's design into another repo's _out.
     $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
 
-    if ($Phase -ne 'Hardware') {
-        $ProjectPath = Resolve-TiaProjectPath -ProjectPath $ProjectPath -Project $proj -RepoRoot $repoRoot
+    $ProjectPath = Resolve-TiaProjectPath -ProjectPath $ProjectPath -Project $proj -RepoRoot $repoRoot
+    if (@('Project','Hardware') -notcontains $Phase) {
         $xmlDir = Join-Path $repoRoot '_out\xml'
+        $amap = if ($ReportPath) { $ReportPath } else { Join-Path $repoRoot 'reports\90_AddressMap.csv' }
         switch ($Phase) {
-            'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
-            'Data'  { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
-            'Safety' {
-                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
-                $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetSafetyPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
-            }
-            'Certified' {
-                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
-                $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetCertifiedPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
-            }
-            'IOMap' {
-                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
-                $amap = Join-Path $repoRoot 'reports/90_AddressMap.csv'
-                return Invoke-TiaSheetIOMapPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save
-            }
-            'Tags'  {
-                $repoRoot = Split-Path -Parent (Split-Path -Parent $Path)
-                $amap = if ($ReportPath) { $ReportPath } else { Join-Path $repoRoot 'reports\90_AddressMap.csv' }
-                return Invoke-TiaSheetTagPhase -Model $model -ProjectPath $ProjectPath -AddressMapPath $amap -ReportDir (Join-Path $repoRoot 'reports') -Save:$Save
-            }
+            'UDTs' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
+            'DB'   { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
+            'Tags' { return Invoke-TiaSheetTagPhase -Model $model -ProjectPath $ProjectPath -AddressMapPath $amap -ReportDir (Join-Path $repoRoot 'reports') -Save:$Save }
+            'IOMap'      { return Invoke-TiaSheetIOMapPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save }
+            'Certified'  { return Invoke-TiaSheetCertifiedPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save }
+            'Interlocks' { return Invoke-TiaSheetSafetyPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -AddressMapPath $amap -Save:$Save }
         }
     }
 
-    # --- hardware preconditions - these are never waived -------------------------------
+    # --- preconditions - these are never waived ----------------------------------------
     $fatal = @()
-    foreach ($k in @('ProjectName','PlcName','CpuMLFB','SubnetName','IoSystemName')) {
+    foreach ($k in @('ProjectName','PlcName','CpuMLFB')) {
         if (-not $proj[$k]) { $fatal += "10_Project: missing key '$k'" }
     }
-    if (-not @($model.Stations).Count)   { $fatal += "20_Stations is empty" }
-    if (-not @($model.Modules).Count) { $fatal += "21_Modules is empty" }
-    foreach ($m in $model.Modules) {
-        if (-not $m.MLFB)       { $fatal += "21_Modules $($m.Area)/$($m.ModuleName): no MLFB" }
-        if (-not $m.ModuleName) { $fatal += "21_Modules $($m.Area) slot $($m.Slot): no ModuleName" }
-    }
-    foreach ($z in $model.Stations) {
-        if (-not $z.Station_Name) { $fatal += "20_Stations $($z.Area): no Station name" }
-        $isLocal = ($z.Area -eq $proj['CpuLocalArea'])
-        if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Stations $($z.Area): remote station needs IM_MLFB" }
+    if ($Phase -eq 'Hardware') {
+        foreach ($k in @('SubnetName','IoSystemName')) {
+            if (-not $proj[$k]) { $fatal += "10_Project: missing key '$k'" }
+        }
+        if (-not @($model.Stations).Count) { $fatal += "20_Stations is empty" }
+        if (-not @($model.Modules).Count)  { $fatal += "21_Modules is empty" }
+        foreach ($m in $model.Modules) {
+            if (-not $m.MLFB)       { $fatal += "21_Modules $($m.Area)/$($m.ModuleName): no MLFB" }
+            if (-not $m.ModuleName) { $fatal += "21_Modules $($m.Area) slot $($m.Slot): no ModuleName" }
+        }
+        foreach ($z in $model.Stations) {
+            if (-not $z.Station_Name) { $fatal += "20_Stations $($z.Area): no Station name" }
+            $isLocal = ($z.Area -eq $proj['CpuLocalArea'])
+            if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Stations $($z.Area): remote station needs IM_MLFB" }
+        }
     }
     if ($fatal.Count) {
         foreach ($f in $fatal) { Write-Host "  $f" -ForegroundColor Red }
-        throw "Hardware rows are incomplete - $($fatal.Count) problem(s). These are never waived by -Force."
+        throw "$Phase rows are incomplete - $($fatal.Count) problem(s). These are never waived by -Force."
     }
-
-    $ProjectPath = Resolve-TiaProjectPath -ProjectPath $ProjectPath -Project $proj -RepoRoot $repoRoot
 
     $localArea = $proj['CpuLocalArea']
     Write-Host ("build: {0} -> {1}" -f $proj['ProjectName'], $ProjectPath)
@@ -159,20 +158,45 @@ function Invoke-TiaBuildFromSheet {
         @($model.Stations).Count, @($model.Modules).Count, $proj['CpuMLFB'],
         $proj['PlcName'], $(if ($localArea) { $localArea } else { '(none)' }))
 
-    # --- project + CPU ------------------------------------------------------------------
-    if (Test-Path $ProjectPath) {
-        if (-not $Force) { throw "Project folder already exists: $ProjectPath (use -Force to replace it)" }
-        Remove-Item $ProjectPath -Recurse -Force
-    }
-    Connect-TiaPortal -New -WithUserInterface:$false | Out-Null
-    try {
+    # --- phase 1 'Project': the project file and the CPU, nothing else ------------------
+    # Split from Hardware so the two questions stay separate: "does the project and CPU
+    # exist" and "is the rack right". A CPU that will not create is a different problem
+    # from a module that will not plug, and only this phase may destroy an existing
+    # project folder.
     $cpuFw = $proj['CpuFW']
     $cpuTid = "OrderNumber:$($proj['CpuMLFB'])" + $(if ($cpuFw) { if ($cpuFw -like '/*') { $cpuFw } else { "/$cpuFw" } } else { '' })
-    New-TiaProject -Name $proj['ProjectName'] -Path (Split-Path -Parent $ProjectPath) | Out-Null
-    New-TiaDevice -TypeIdentifier $cpuTid -Name $proj['PlcName'] | Out-Null
+    if ($Phase -eq 'Project') {
+        if (Test-Path $ProjectPath) {
+            if (-not $Force) { throw "Project folder already exists: $ProjectPath (use -Force to replace it)" }
+            Remove-Item $ProjectPath -Recurse -Force
+        }
+        Connect-TiaPortal -New -WithUserInterface:$false | Out-Null
+        try {
+            New-TiaProject -Name $proj['ProjectName'] -Path (Split-Path -Parent $ProjectPath) | Out-Null
+            New-TiaDevice -TypeIdentifier $cpuTid -Name $proj['PlcName'] | Out-Null
+            $project = Get-TiaProject
+            $cpuDev = $project.Devices | Where-Object { $_.Name -eq $proj['PlcName'] } | Select-Object -First 1
+            if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' was not created ($cpuTid)." }
+            Write-Host ("  project '{0}' + CPU '{1}' ({2})" -f $proj['ProjectName'], $proj['PlcName'], $proj['CpuMLFB'])
+            $plc = Get-TiaPlc | Select-Object -First 1
+            $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+            $cErr = 0; try { $cErr = $compile.Errors } catch { }
+            Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+            if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+            return [pscustomobject]@{
+                Ok = ($cErr -eq 0); Phase = 'Project'; ProjectPath = $ProjectPath
+                Plc = $proj['PlcName']; Cpu = $proj['CpuMLFB']
+                CompileState = [string]$compile.State; CompileErrors = $cErr
+            }
+        } finally { try { Disconnect-TiaPortal -Close | Out-Null } catch { } }
+    }
+
+    # --- phase 2 'Hardware': racks, modules, network ------------------------------------
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
     $project = Get-TiaProject
     $cpuDev = $project.Devices | Where-Object { $_.Name -eq $proj['PlcName'] } | Select-Object -First 1
-    if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' was not created." }
+    if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' is not in the project - run -Phase Project first." }
 
     $plugged = 0; $failed = @(); $stations = @(); $netWarn = @(); $netInherit = @(); $labelled = 0
     $niType = [Siemens.Engineering.HW.Features.NetworkInterface]

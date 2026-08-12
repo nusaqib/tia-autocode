@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.3'
+$script:TiaSheetSchemaVersion = '1.4'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -42,11 +42,23 @@ $script:TiaSheetSchemaVersion = '1.3'
 #     IO_System, IP_Address, Subnet_Mask, Device_Number, Device_Name), separating the
 #     station's TIA name from the Area key that used to be called Station.
 #   - 10_Project: CpuLocalZone -> CpuLocalArea (its value is an Area key).
+#
+# v1.4 changes - ONE data block, THREE program blocks:
+#   - 22_Devices.DeviceRef -> Device (and the {Device} naming placeholder).
+#   - Areas become UDTs. The build generates one UDT per area from 22_Devices and
+#     instantiates all of them in a single system F-DB, replacing the 16 per-area F-DBs.
+#     A member path gains an area level: DB_SR_PPS.BTA.SE0101.EMO.ChA.
+#   - One F-FB per LAYER for the whole system (IOMap / Certified / Safety) instead of one
+#     per area per layer, so BlockPattern loses {Area}. The safety runtime calls 3 blocks.
+#     Trade-off to know: an F-signature now covers the whole program, so any edit re-signs
+#     everything - the per-area boundary for change-impact analysis is gone.
+#   - {InputType} tag prefix: fi/fo (fail-safe in/out) or ni/no (standard), derived from
+#     the channel's module Kind, so a tag name states its own safety class.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Stations'    = @('Area','Name','Description','Station_Name','Station_Label','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
     '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
-    '22_Devices'     = @('DeviceID','Area','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
+    '22_Devices'     = @('DeviceID','Area','Device','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
     '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
     '31_Policy'      = @('PolicyID','DeviceType','Component','UDT','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
@@ -356,7 +368,8 @@ function Test-TiaDesignSheet {
     foreach ($r in $tabs['10_Project']) { if ($r.Key) { $proj[$r.Key] = [string]$r.Value } }
     foreach ($k in @('ProjectName','PlcName','CpuMLFB','CpuFW','SubnetName','IoSystemName',
                      'SafetyRuntimeFB','TagTableIn','TagPattern','DbPattern','BlockPattern',
-                     'InstancePattern','BlockNumberBase','BlockNumberStep','ModulePattern')) {
+                     'InstancePattern','BlockNumberBase','BlockNumberStep','ModulePattern',
+                     'AreaUdtPattern')) {
         if (-not $proj.ContainsKey($k) -or -not $proj[$k]) { $errors.Add("10_Project: missing key '$k'") }
     }
     if ($proj['SchemaVersion'] -and ([version]$proj['SchemaVersion'] -gt [version]$script:TiaSheetSchemaVersion)) {
@@ -374,11 +387,11 @@ function Test-TiaDesignSheet {
         if ($r.UDT -and -not $udts.ContainsKey($r.UDT)) { $errors.Add("22_Devices $($r.DeviceID): UDT '$($r.UDT)' not in 30_UDTs") }
         if ($idSeen.ContainsKey($r.DeviceID)) { $errors.Add("22_Devices: duplicate DeviceID '$($r.DeviceID)'") }
         else { $idSeen[$r.DeviceID] = $true }
-        # DeviceRef becomes the F-DB member name, so it must be unique within its area or
+        # Device becomes the F-DB member name, so it must be unique within its area or
         # two devices silently share one set of safety data
-        $k = "$($r.Area)|$($r.DeviceRef)"
+        $k = "$($r.Area)|$($r.Device)"
         if ($refSeen.ContainsKey($k)) {
-            $errors.Add("22_Devices: area $($r.Area) has two devices with DeviceRef '$($r.DeviceRef)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
+            $errors.Add("22_Devices: area $($r.Area) has two devices with Device '$($r.Device)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
         } else { $refSeen[$k] = $r.DeviceID }
     }
     $ipSeen = @{}; $dnSeen = @{}; $stSeen = @{}; $maskByIo = @{}

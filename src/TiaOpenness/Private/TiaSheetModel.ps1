@@ -80,7 +80,7 @@ function Read-TiaSheetModel {
 function Expand-TiaSheetPattern {
     <#
     .SYNOPSIS
-        Expand a naming pattern from 10_Project. Placeholders: {Area} {DeviceRef}
+        Expand a naming pattern from 10_Project. Placeholders: {Area} {Device}
         {Component} {Signal} {Layer} {Instruction} {Instance}.
     #>
     param([Parameter(Mandatory)][string]$Pattern, [hashtable]$Values)
@@ -121,6 +121,27 @@ function Get-TiaModuleKindToken {
     ([string]$Kind) -replace '[^A-Za-z0-9]', ''
 }
 
+function Get-TiaModuleInputType {
+    <#
+    .SYNOPSIS
+        Tag-name safety-class prefix for a channel, from its module Kind.
+    .DESCRIPTION
+        fi = fail-safe input, fo = fail-safe output, ni / no = the standard equivalents.
+        The prefix is DERIVED, never authored: it restates the module the channel is wired
+        to, and a hand-typed prefix that disagrees with the rack would be a tag that lies
+        about its own safety class.
+    #>
+    param([string]$Kind)
+    switch (([string]$Kind).ToUpperInvariant()) {
+        'F-DI' { 'fi' }
+        'F-DQ' { 'fo' }
+        'F-RQ' { 'fo' }
+        'DI'   { 'ni' }
+        'DQ'   { 'no' }
+        default { '' }
+    }
+}
+
 function Get-TiaSheetAreaChannels {
     <#
     .SYNOPSIS
@@ -134,8 +155,8 @@ function Get-TiaSheetAreaChannels {
             $out += [pscustomobject]@{
                 Channel = $c; Device = $d
                 TagName = Expand-TiaSheetPattern -Pattern $Model.Project['TagPattern'] -Values @{
-                    Area = $Area; DeviceRef = $d.DeviceRef; Component = $c.Component; Signal = $c.Signal }
-                MemberPath = "$($d.DeviceRef).$($c.Component).$($c.Signal)"
+                    Area = $Area; Device = $d.Device; Component = $c.Component; Signal = $c.Signal }
+                MemberPath = "$($d.Device).$($c.Component).$($c.Signal)"
             }
         }
     }

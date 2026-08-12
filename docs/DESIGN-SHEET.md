@@ -18,14 +18,27 @@ design workbook --Sync-TiaDesignSheet--> design/csv/*.csv  (COMMITTED = the buil
 |---|---|
 | `Sync-TiaDesignSheet -Path .\design` | expand the workbook tabs into `design/csv` |
 | `Test-TiaDesignSheet -Path .\design\csv` | offline schema + safety-rule check |
-| `Invoke-TiaSheetPipeline -Clean -Save` | delete the old project, run all seven phases |
-| `Invoke-TiaSheetPipeline -From Data -Save` | resume at a phase after fixing the design |
-| `Invoke-TiaBuildFromSheet -Phase Types` | run exactly one phase |
+| `Invoke-TiaSheetPipeline -Clean -Save` | delete the old project, run all eight phases |
+| `Invoke-TiaSheetPipeline -From DB -Save` | resume at a phase after fixing the design |
+| `Invoke-TiaBuildFromSheet -Phase UDTs` | run exactly one phase |
 | `Clear-TiaSheetBuild` | delete the generated project, XML and reports |
 | `Export-TiaDesignWorkbook` | rebuild the workbook from `design/csv` (exact inverse) |
 
+### The eight phases
+
+| # | Phase | Reads | Produces |
+|---|---|---|---|
+| 1 | `Project` | `10_Project` | the project file and the CPU |
+| 2 | `Hardware` | `20_Stations`, `21_Modules` | stations, modules, subnet + IO system, `90_AddressMap.csv` |
+| 3 | `UDTs` | `30_UDTs`, `22_Devices` | device types **plus one generated type per area** |
+| 4 | `DB` | `22_Devices`, `32_Blocks` | one system F-DB, every area a typed member |
+| 5 | `Tags` | `23_Channels`, `90_AddressMap` | one PLC tag per channel at its live address |
+| 6 | `IOMap` | `23_Channels`, `22_Devices` | `FB_IOMap` - channel tag into DB member |
+| 7 | `Certified` | `31_Policy`, `33_SafetyBlocks` | `FB_Certified` - ESTOP1 / SFDOOR / EV1oo2DI |
+| 8 | `Interlocks` | `34_Interlocks` | `FB_Safety` + the safety runtime |
+
 `Invoke-TiaSheetPipeline` stops at the first failing phase. The phases are a chain - Tags
-reads the address map Hardware wrote, Certified reads the F-DBs Data created - so carrying
+reads the address map Hardware wrote, Certified reads the F-DB the DB phase created - so carrying
 on past a failure would build safety logic on a known-bad foundation. `-ContinueOnError`
 exists to see how far a design gets, not to produce a program.
 
@@ -37,17 +50,17 @@ forced: a typo in `ProjectPath` must not be able to erase a live project.
 | `10_Project` | the project, the CPU, safety settings, naming + numbering rules |
 | `20_Stations` | PROFINET stations, addressing and the IO system |
 | `21_Modules` | plugged modules (CPU-local and remote) |
-| `22_Devices` | typed members of each area F-DB |
+| `22_Devices` | members of each generated area UDT |
 | `23_Channels` | PLC tags at live addresses + the IOMap rungs (incl. signal inversion) |
 | `30_UDTs` | the UDT library |
 | `32_Blocks` | block inventory, languages, numbers |
 | `33_SafetyBlocks` | certified ESTOP1 / SFDOOR / EV1oo2DI networks |
-| `34_Interlocks` | area interlock logic and the safety-runtime wiring |
+| `34_Interlocks` | area interlock logic, the system summation, and the runtime wiring |
 
 **`Area` is the key in every tab.** One short code (`MCR`, `BTA`, `S01_FE`) identifies a
 station in `20_Stations` and is the foreign key from every other tab. It is also the
-`{Area}` naming placeholder, so an area owns one station, one F-DB, and one block per
-layer. (Before v1.3 this column was called `Zone`, which collided with the
+`{Area}` naming placeholder, so an area owns one station and one typed member of the
+system F-DB. (Before v1.3 this column was called `Zone`, which collided with the
 radiation-safety meaning of "zone" in the drawings.)
 
 **Why a committed snapshot and not a live read:** a build must be reproducible from a git
@@ -60,7 +73,7 @@ stays offline.
 
 - One CSV per tab, named exactly as the tab: `design/csv/<TabName>.csv`.
 - **Header casing is significant** (consumers do case-sensitive property access).
-- IDs are stable and never reused; renaming a device changes `DeviceRef`, not `DeviceID`.
+- IDs are stable and never reused; renaming a device changes `Device`, not `DeviceID`.
 - Enum columns are closed sets (below). Blank is not a member of any enum.
 - `Verified` (`Yes`/`No`) + `DrawingRef` appear on every row that feeds safety logic.
   **Generators refuse to emit certified safety logic from `Verified=No` rows** unless
@@ -101,17 +114,29 @@ Numbering leaves gaps so lifecycle tabs (`10_Requirements`, `11_SafetyFunctions`
 | `SubnetName` / `IoSystemName` | PROFINET subnet and IO-system names |
 | `SafetyRuntimeFB` | safety main FB the area FBs are called from (`Main_Safety_RTG1`) |
 | `TagTableIn` / `TagTableOut` | tag-table names for F inputs / outputs |
-| `TagPattern` | tag-name grammar, e.g. `PPS_{Area}_{DeviceRef}_{Component}_{Signal}` |
-| `DbPattern` / `BlockPattern` | `DB_{Area}` / `FB_{Area}_{Layer}` |
+| `TagPattern` | tag-name grammar, e.g. `{InputType}SRPPS_{Area}_{Device}_{Component}_{Signal}` |
+| `DbPattern` | the **single** system F-DB, e.g. `DB_SR_PPS` |
+| `AreaUdtPattern` | generated area type, e.g. `UDT_Area_{Area}` |
+| `BlockPattern` | one F-FB per layer, e.g. `FB_{Layer}` -> `FB_IOMap` |
 | `ModulePattern` | module-name grammar, e.g. `{Area}_{Kind}_{Slot}` -> `BTA_FDI_3` |
-| `InstancePattern` | certified-instruction instance name, e.g. `Inst_{DeviceRef}_{Component}_{Instruction}` |
-| `BlockNumberBase` / `BlockNumberStep` | per-area block numbering (area *i* -> base + i*step) |
+| `InstancePattern` | certified instance, e.g. `Inst_{Area}_{Device}_{Component}_{Instruction}` |
+| `BlockNumberBase` / `BlockNumberStep` | block numbering (`32_Blocks.Number` overrides) |
 | `SignalSense` | `FailSafe` - documents the house convention (see `23_Channels.Invert`) |
 | `RequireVerified` | `Yes`/`No` - refuse to generate safety logic from unverified rows |
 
-Placeholders in patterns: `{Area} {DeviceRef} {Component} {Signal} {Layer} {Instruction}`,
-plus `{Kind}` and `{Slot}` in `ModulePattern`. Unknown keys are a warning, not an error, so
-the sheet can carry project notes.
+Placeholders: `{Area} {Device} {Component} {Signal} {Layer} {Instruction} {InputType}`, plus
+`{Kind}`/`{Slot}` in `ModulePattern`. Unknown keys are a warning, not an error, so the sheet
+can carry project notes.
+
+**`{InputType}`** is the channel's safety class - `fi` fail-safe input, `fo` fail-safe
+output, `ni`/`no` the standard equivalents. It is **derived** from the `Kind` of the module
+the channel is wired to and never authored: a hand-typed prefix that disagreed with the rack
+would be a tag name that lies about its own safety class. `fiSRPPS_BTA_SE0101_EMO_ChA`.
+
+**`InstancePattern` must contain `{Area}`.** With one Certified block for the whole system,
+instance names share one namespace, and `Device` is only unique inside its area (`CH10`
+exists in both MCR and BTA). The build refuses on a duplicate rather than silently merging
+two devices onto one certified instance.
 
 ### Design - plant and hardware
 
@@ -146,7 +171,7 @@ the sheet can carry project notes.
 
 > Named `20_Stations`, **not** a "Devices" tab: `22_Devices` already means field devices
 > (crash-off buttons, gates, detectors). Two tabs both called Device would give `DeviceID`
-> and `DeviceRef` two different meanings in a safety review.
+> and `Device` two different meanings in a safety review.
 
 **`21_Modules`** - one row per plugged module.
 
@@ -169,9 +194,10 @@ the sheet can carry project notes.
 
 **`22_Devices`** - one row per physical device.
 
-`DeviceID, Area, DeviceRef, DeviceType, UDT, Description, Location, DrawingRef, InInterlock, SF_ID, Verified, Notes`
+`DeviceID, Area, Device, DeviceType, UDT, Description, Location, DrawingRef, InInterlock, SF_ID, Verified, Notes`
 
-- `DeviceID` - stable primary key. `DeviceRef` - the name used in code/DB member.
+- `DeviceID` - stable primary key. `Device` - the name used in code and as the DB member,
+  unique within its area (it becomes a member of that area's generated UDT).
 - `DeviceType` enum (project-extensible): `SCB`, `EMO`, `KeySwitch`, `CSD`, `Gate`,
   `RadDetector`, `KeyCache`, `Chain`, `Light`, `RF`.
 - `UDT` - the UDT that types this device's DB member; must exist in `30_UDTs`.
@@ -223,7 +249,9 @@ the sheet can carry project notes.
 
 - `30_UDTs.Datatype` - S7 primitive or a quoted UDT reference (`"UDT_SafeInput"`).
   `Order` fixes member order. Nested UDTs must be defined before use.
-- `32_Blocks.Layer` enum: `IOMap`, `Safety`, `Certified`, `Runtime`.
+- `32_Blocks` is now FIVE rows, not one per area per layer: the system F-DB, the three
+  layer F-FBs and the runtime. `Layer` enum: `Data`, `IOMap`, `Certified`, `Safety`,
+  `Runtime`. Leave `Area` blank - these blocks span the system.
   `Language` enum: `F_LAD`, `F_DB`, `LAD`, `SCL`. `Number` unique per PLC.
 - `33_SafetyBlocks.Instruction` enum: `ESTOP1`, `SFDOOR`, `EV1oo2DI`, `FDBACK`, `ACK_GL`.
   Time values (`DISCTIME`, `TIME_DEL`) in IEC form (`T#500ms`). These are **safety
@@ -272,6 +300,18 @@ Exit code is non-zero on any error. Warnings do not fail the build but are print
 
 ## Schema history
 
+- **v1.4** - **one data block, three program blocks.** `22_Devices.DeviceRef` -> `Device`.
+  Areas become GENERATED UDTs (`AreaUdtPattern`) instantiated in a single system F-DB, so a
+  member path gains an area level (`DB_SR_PPS.BTA.SE0101.EMO.ChA`) and `DbPattern` is a
+  literal name. One F-FB per layer for the whole system instead of one per area per layer,
+  so `BlockPattern` loses `{Area}` and `InstancePattern` gains it. `{InputType}` (fi/fo/ni/no)
+  added to `TagPattern`, derived from the module `Kind`. `32_Blocks` drops from one row per
+  area per layer to five system rows. Build phases become `Project`, `Hardware`, `UDTs`,
+  `DB`, `Tags`, `IOMap`, `Certified`, `Interlocks`.
+
+  > **Know the trade.** An F-signature now covers the whole safety program: any edit
+  > re-signs everything, so the per-area boundary that let you argue an untouched area needs
+  > no re-test is gone. That is the cost of one browsable DB and three blocks.
 - **v1.3** - `Zone` -> **`Area`** in every tab (one name for one thing; "zone" meant
   something else in the drawings). `20_Stations` columns take underscore names and separate
   `Area` / `Station_Name` / `Station_Label`. `23_Channels.Polarity` -> **`Invert`** with the

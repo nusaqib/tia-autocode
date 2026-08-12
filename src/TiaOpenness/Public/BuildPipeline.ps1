@@ -1,11 +1,11 @@
 # High-level entry points over Invoke-TiaBuildFromSheet: run the whole phase pipeline,
 # and clear the generated output so the next run starts from nothing.
 #
-# These exist because the seven phases are ORDERED and each one's output is the next one's
+# These exist because the eight phases are ORDERED and each one's output is the next one's
 # input - typing them by hand invites building Certified logic against a stale F-DB.
 
-# The pipeline order. Hardware creates the project; every later phase opens it again.
-$script:TiaSheetPhaseOrder = @('Hardware','Types','Data','Tags','IOMap','Certified','Safety')
+# The pipeline order. Project creates the project file; every later phase opens it again.
+$script:TiaSheetPhaseOrder = @('Project','Hardware','UDTs','DB','Tags','IOMap','Certified','Interlocks')
 
 function Invoke-TiaSheetPipeline {
     <#
@@ -16,7 +16,7 @@ function Invoke-TiaSheetPipeline {
         phases depend on each other, with one summary at the end.
 
         It STOPS at the first failing phase by default. The phases are a chain - Tags reads
-        the address map the Hardware phase wrote, Certified reads the F-DBs the Data phase
+        the address map the Hardware phase wrote, Certified reads the F-DB the DB phase
         created - so continuing past a failure builds safety logic on top of a known-bad
         foundation. -ContinueOnError is for diagnosing how far the design gets, not for
         producing a program.
@@ -24,9 +24,9 @@ function Invoke-TiaSheetPipeline {
         Design CSV snapshot folder (default: .\design\csv).
     .PARAMETER Phase
         Subset of phases to run, in pipeline order regardless of how they are listed.
-        Default: all seven.
+        Default: all eight.
     .PARAMETER From
-        Start at this phase and run the rest (e.g. -From Data after fixing a UDT).
+        Start at this phase and run the rest (e.g. -From DB after fixing a UDT).
     .PARAMETER Clean
         Delete the generated project first, so the run starts from nothing.
     .PARAMETER ContinueOnError
@@ -36,14 +36,14 @@ function Invoke-TiaSheetPipeline {
     .EXAMPLE
         Invoke-TiaSheetPipeline -Clean -Save
     .EXAMPLE
-        Invoke-TiaSheetPipeline -From Data -Save
+        Invoke-TiaSheetPipeline -From DB -Save
     #>
     [CmdletBinding()]
     param(
         [string]$Path = '.\design\csv',
         [string]$ProjectPath,
-        [ValidateSet('Hardware','Types','Data','Tags','IOMap','Certified','Safety')][string[]]$Phase,
-        [ValidateSet('Hardware','Types','Data','Tags','IOMap','Certified','Safety')][string]$From,
+        [ValidateSet('Project','Hardware','UDTs','DB','Tags','IOMap','Certified','Interlocks')][string[]]$Phase,
+        [ValidateSet('Project','Hardware','UDTs','DB','Tags','IOMap','Certified','Interlocks')][string]$From,
         [switch]$Clean,
         [switch]$Force,
         [switch]$RequireVerified,
