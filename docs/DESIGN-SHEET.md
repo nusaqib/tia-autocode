@@ -54,7 +54,7 @@ forced: a typo in `ProjectPath` must not be able to erase a live project.
 | `30_UDTs` | the UDT library **and the devices** - each area type's members are its devices |
 | `32_Blocks` | block inventory, languages, numbers |
 | `33_SafetyBlocks` | certified ESTOP1 / SFDOOR / EV1oo2DI networks |
-| `34_Interlocks` | area interlock logic, the system summation, and the runtime wiring |
+| `34_Interlocks` | area interlock logic, the system summation, and the runtime wiring (a target x device matrix) |
 
 **`Area` is the key in every tab.** One short code (`MCR`, `BTA`, `S01_FE`) identifies a
 station in `20_Stations` and is the foreign key from every other tab. It is also the
@@ -260,7 +260,8 @@ two devices onto one certified instance.
 | `31_Policy` | `PolicyID, UDT, Component, Order, Instruction, Version, DISCTIME, TIME_DEL, ACK_NEC, OPEN_NEC, AckSource, QTarget, Rationale, Verified` |
 | `32_Blocks` | `Block, Area, Layer, Language, Number, Description` |
 | `33_SafetyBlocks` | `RowID, DeviceID, Component, Instruction, Version, InstanceName, DISCTIME, TIME_DEL, ACK_NEC, OPEN_NEC, AckSource, QTarget, Verified, Notes` |
-| `34_Interlocks` | `Area, Target, DeviceID, Member, Include, Rationale, SF_ID` |
+| `34_Interlocks` | `Area, Target,` then **one column per `DeviceID`** (a matrix - see below) |
+| `34_Exclusions` | `DeviceID, Rationale, SF_ID` |
 | `35_Outputs` | `OutputID, Area, DeviceID, Signal, Slot, Channel, DrivenBy, FDBACK` |
 
 - `30_UDTs.Datatype` - S7 primitive or a quoted UDT reference (`"UDT_SafeInput"`).
@@ -306,10 +307,41 @@ UDT_Area_BTA,11, Area_Safe,      Bool,           area safe summary
 - `33_SafetyBlocks.Instruction` enum: `ESTOP1`, `SFDOOR`, `EV1oo2DI`, `FDBACK`, `ACK_GL`.
   Time values (`DISCTIME`, `TIME_DEL`) in IEC form (`T#500ms`). These are **safety
   parameters** - each needs an engineering justification, not a default.
-- `34_Interlocks.Target` enum: `Interlocks_OK`, `Area_Safe`. `Include` (`Yes`/`No`) with a
-  `Rationale` - an excluded device must say why. This table makes **trip-path coverage
-  auditable**: a device wired and indicated but absent from the interlock is worse than
-  absent, because it looks functional.
+
+**`34_Interlocks` is a cause-and-effect matrix.** One **row** per target, one **column**
+per device, a mark where that device feeds that target:
+
+```
+Area,   Target,        BTA_IntGateA, BTA_SCB_SE0101, ..., SRRF_SCB_SE0201, ...
+MCR,    Interlocks_OK,             ,               ,    ,                ,
+BTA,    Interlocks_OK,            X,              X,    ,                ,
+SRRF,   Interlocks_OK,             ,               ,    ,               X,
+```
+
+- `Target` enum: `Interlocks_OK`, `Area_Safe`. One row per `(Area, Target)`.
+- A cell is a **mark** (`X`) or **empty**. Anything else is an error, never a silent
+  "not included" - the workbook exporter puts an `X`-only dropdown on every mark column.
+- **Every device gets a column, marked or not.** The grid is the coverage claim, so a
+  device missing from it is one nobody considered - which must not look like one
+  considered and left out.
+- A mark is only valid for a device in the target's **own area**: the build ANDs
+  contributors per area, so a cross-area mark would build nothing at all. In a grid that
+  mark is one cell away from a correct one, so it is a hard error.
+- A device that feeds no target goes in **`34_Exclusions`** with a `Rationale`. There is no
+  cell to write a reason in, and an empty column with no reason is exactly the gap this
+  table exists to close.
+
+This makes **trip-path coverage auditable**: a device wired and indicated but absent from
+the interlock is worse than absent, because it looks functional. In a grid that device is
+an empty column - visible without a query.
+
+There is **no `Member` column**: the build computes each device's terminal contributor
+itself (`Device_Safe` for a multi-component type, the component's own terminal output
+otherwise), so an authored member could only ever disagree with what is generated.
+
+Trade-off to know: a one-cell change is a one-line diff across ~48 fields, where the long
+form gave one added or removed line. The grid is grouped by area, so a change stays on its
+area's row, but reviewing a diff here means reading the header.
 
 ### Generated reports (never authored here)
 
@@ -329,7 +361,7 @@ Referential:
    `23_Channels.ModuleName` -> `21_Modules.ModuleName` within the same area.
 5. Every area-UDT member's datatype resolves to a `30_UDTs.UDT`; nested types resolve.
 6. `33_SafetyBlocks.DeviceID`+`Component` -> an existing `23_Channels` component group.
-7. `34_Interlocks.DeviceID` -> a device.
+7. Every `34_Interlocks` column header is a `DeviceID`, and every device has a column.
 
 Network:
 8. `IP_Address` is a dotted IPv4 quad; `IP_Address`, `Device_Number` and `Station_Name`
@@ -340,14 +372,15 @@ Safety:
 10. `(Area, Slot, Channel)` unique; the module exists in `21_Modules` for that area.
 11. `Paired=Yes` requires exactly one `ChA` and one `ChB` for that device+component;
     `Paired=No` requires exactly one `ChA` and is reported as **1oo1 needing review**.
-12. Every device that has channels appears in `34_Interlocks` - included, or excluded with
-    a non-empty `Rationale`. A device wired and evaluated but contributing to nothing is
-    the failure this catches, and silence is what it looks like.
+12. Every device that has channels is marked against at least one target, or listed in
+    `34_Exclusions` with a non-empty `Rationale` - and never both. A device wired and
+    evaluated but contributing to nothing is the failure this catches, and silence is what
+    it looks like.
 13. `Invert=Yes` channels are listed by name (each one negates a contact).
 14. `Verified=No` rows are reported; with `-RequireVerified` they are errors. On
     `23_Channels` this is the gate for signal sense - see `Invert`.
-15. `34_Interlocks.Member` resolves to a real member of that device's UDT - otherwise the
-    generated contact would point at nothing.
+15. Every `34_Interlocks` cell is a mark or empty; no two rows share an `(Area, Target)`;
+    and a mark names a device in the target's own area.
 16. A `FailsafeCompliant=Yes` member's `Datatype` is F-compliant (`Bool`, `Int`, `DInt`,
     `Word`, `Time`, or a nested F-compliant UDT).
 
@@ -355,6 +388,16 @@ Exit code is non-zero on any error. Warnings do not fail the build but are print
 
 ## Schema history
 
+- **v1.9** - **`34_Interlocks` becomes a cause-and-effect matrix.** Rows are targets,
+  columns are devices, a mark is a contribution. The long form said the same thing in one
+  row per contributor and buried the question a reviewer actually asks - *what feeds this
+  target, and what feeds nothing?* - in a list you have to sort to read. `DeviceID` became
+  the column header, `Include` became the mark, and `Member` is gone: it was never read,
+  because the build computes each device's terminal contributor itself. Every device now
+  gets a column whether marked or not, so an unconsidered device cannot look like an
+  excluded one, and `Rationale` moves to the new **`34_Exclusions`** tab (a per-device fact
+  with no cell to live in). A mark outside the target's own area is a hard error - the
+  build ANDs per area, so such a mark would build nothing.
 - **v1.8** - **`22_Devices` REMOVED; the area UDTs are authored.** Area types are declared
   in `30_UDTs` like any other type instead of being invented by the build, which also makes
   `Area_Reset` / `Interlocks_OK` / `Area_Safe` real rows - they were referenced by

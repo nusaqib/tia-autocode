@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.8'
+$script:TiaSheetSchemaVersion = '1.9'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -124,6 +124,26 @@ $script:TiaSheetSchemaVersion = '1.8'
 #     a free-text DeviceType label never gave.
 #   - Interlock coverage no longer keys off 22_Devices.InInterlock. The rule is now: a
 #     device with channels must appear in 34_Interlocks, included or excluded-with-reason.
+#
+# v1.9 changes - 34_Interlocks becomes a cause-and-effect matrix:
+#   - The tab is now a grid: one ROW per (Area, Target), one COLUMN per DeviceID, a mark
+#     where that device feeds that target. Long form said the same thing in 46 rows and
+#     buried the question a reviewer actually asks - "what feeds this target, and what
+#     feeds nothing?" - in a list you have to sort to read. In a grid an unused device is
+#     an empty column, visible without a query.
+#   - DeviceID, Member and Include are gone. DeviceID became the column header; Include
+#     became the mark; Member was never read - the build computes each device's terminal
+#     contributor itself (Device_Safe for a multi-component type, the component's own
+#     terminal output otherwise), so the column could only ever disagree with the build.
+#   - EVERY device gets a column, whether marked or not. The grid is a coverage claim, so
+#     a device missing from it is a device nobody considered - which is the thing being
+#     checked, and cannot be allowed to look identical to "considered and excluded".
+#   - Rationale moves to a new 34_Exclusions tab (DeviceID, Rationale, SF_ID). It is a
+#     per-device fact and there is no cell to put it in; keeping the requirement is what
+#     matters - an empty column is only acceptable if someone wrote down why.
+#   - A mark is only valid for a device in the target's OWN area. The build ANDs per area,
+#     so a cross-area mark would build nothing at all, and the grid makes such a mark
+#     trivially easy to enter by accident.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Stations'    = @('Area','Name','Description','Station_Name','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
@@ -133,7 +153,9 @@ $script:TiaSheetSchema = [ordered]@{
     '31_Policy'      = @('PolicyID','UDT','Component','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
     '32_Blocks'      = @('Block','Area','Layer','Language','Number','Description')
     '33_SafetyBlocks'= @('RowID','DeviceID','Component','Instruction','Version','InstanceName','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Verified','Notes')
-    '34_Interlocks'  = @('Area','Target','DeviceID','Member','Include','Rationale','SF_ID')
+    # A matrix tab: these two columns are fixed and every FURTHER column is a DeviceID,
+    # so the schema states the prefix and the interlock rules check the rest.
+    '34_Interlocks'  = @('Area','Target')
 }
 # closed enum sets: "Tab.Column" -> allowed values
 $script:TiaSheetEnums = @{
@@ -146,9 +168,14 @@ $script:TiaSheetEnums = @{
     '32_Blocks.Language'         = @('F_LAD','F_DB','F_FBD','LAD','SCL')
     '33_SafetyBlocks.Instruction'= @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
     '34_Interlocks.Target'       = @('Interlocks_OK','Area_Safe')
-    '34_Interlocks.Include'      = @('Yes','No')
 }
 $script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','23_Channels','31_Policy','33_SafetyBlocks')
+
+# Matrix tabs: tab -> the fixed leading (key) columns. Every column after those is a
+# dynamic header - a DeviceID - and the cell under it is a mark or empty. Declared here so
+# the validator, the model and the workbook exporter all agree on where the keys stop.
+$script:TiaSheetMatrixTabs = [ordered]@{ '34_Interlocks' = @('Area','Target') }
+$script:TiaSheetMatrixMark = 'X'
 
 # Headers for every known tab, including the optional/governance ones. Used to preserve a
 # tab's header when it legitimately has zero data rows (the xlsx reader consumes row 1 as
@@ -156,6 +183,7 @@ $script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','23_Channels','31_Po
 $script:TiaSheetKnownHeaders = [ordered]@{
     '01_Revisions' = @('Rev','Date','Author','Summary','Approver','SnapshotCommit')
     '02_Decisions' = @('DecID','Topic','Question','Decision','Rationale','Status','Owner','Date')
+    '34_Exclusions'= @('DeviceID','Rationale','SF_ID')
     '35_Outputs'   = @('OutputID','Area','DeviceID','Signal','Slot','Channel','DrivenBy','FDBACK')
 }
 foreach ($k in $script:TiaSheetSchema.Keys) { $script:TiaSheetKnownHeaders[$k] = $script:TiaSheetSchema[$k] }
@@ -397,6 +425,12 @@ function Test-TiaDesignSheet {
         foreach ($c in $script:TiaSheetSchema[$t]) {
             if ($have -cnotcontains $c) { $errors.Add("${t}: missing column '$c' (exact casing required)") }
         }
+    }
+    # Optional tabs: absent is legitimate (nothing excluded, no outputs authored yet), so
+    # they carry no "missing tab" error - but their rules still run when they are present.
+    foreach ($t in @('34_Exclusions')) {
+        $f = Join-Path $Path "$t.csv"
+        $tabs[$t] = if (Test-Path $f) { @(Import-Csv $f | Where-Object { $_ }) } else { @() }
     }
     if ($errors.Count) {
         return [pscustomobject]@{ Ok=$false; Errors=$errors; Warnings=$warns; Summary='schema failed' }
@@ -661,30 +695,70 @@ function Test-TiaDesignSheet {
     }
 
     # interlock coverage - a device wired and indicated but absent from the trip path
-    # is worse than absent, because it looks functional
-    $inter = @{}
-    foreach ($r in $tabs['34_Interlocks']) {
-        if (-not $devices.ContainsKey($r.DeviceID)) { $errors.Add("34_Interlocks: unknown DeviceID '$($r.DeviceID)'"); continue }
-        if ($r.Include -eq 'Yes') { $inter[$r.DeviceID] = $true }
-        elseif (-not $r.Rationale) { $errors.Add("34_Interlocks $($r.DeviceID): Include=No requires a Rationale") }
-        $leaf = ($r.Member -split '\.')[-1]
-        $u = $devices[$r.DeviceID].UDT
-        if ($leaf -and $u -and $udtMembers.ContainsKey($u) -and -not $udtMembers[$u].ContainsKey($leaf)) {
-            $errors.Add("34_Interlocks $($r.DeviceID): Member '$($r.Member)' - '$leaf' is not a member of $u")
+    # is worse than absent, because it looks functional.
+    #
+    # 34_Interlocks is a grid: rows are targets, columns are devices, a mark is a
+    # contribution. Expand it exactly as the model does, so what is validated here is what
+    # the build will read.
+    $mx = Expand-TiaSheetInterlockMatrix -Rows $tabs['34_Interlocks']
+    foreach ($e in $mx.Errors) { $errors.Add($e) }
+
+    # A mistyped column header would otherwise be a whole column of marks contributing
+    # nothing, and a device with NO column is one nobody has considered - which must not
+    # look the same as one considered and left out.
+    foreach ($c in $mx.Columns) {
+        if (-not $devices.ContainsKey($c)) { $errors.Add("34_Interlocks: column '$c' is not a DeviceID") }
+    }
+    foreach ($did in ($devices.Keys | Sort-Object)) {
+        if ($mx.Columns -notcontains $did) {
+            $errors.Add("34_Interlocks: no column for device '$did' - every device is a column, marked or not, because the grid is the coverage claim")
         }
+    }
+    $rowSeen = @{}
+    $n = 0
+    foreach ($r in $tabs['34_Interlocks']) {
+        $n++
+        if (-not $areas.ContainsKey($r.Area)) { $errors.Add("34_Interlocks row ${n}: unknown Area '$($r.Area)'") }
+        # Two rows for one target would each build a rung driving the same coil.
+        $k = "$($r.Area)|$($r.Target)"
+        if ($rowSeen.ContainsKey($k)) { $errors.Add("34_Interlocks: two rows for $($r.Area) $($r.Target)") }
+        else { $rowSeen[$k] = $true }
+    }
+    $inter = @{}
+    foreach ($r in $mx.Rows) {
+        if (-not $devices.ContainsKey($r.DeviceID)) { continue }   # reported as a bad column
+        $inter[$r.DeviceID] = $true
+        # The build ANDs contributors per area, so a mark on a device from another area
+        # builds nothing at all - and in a grid that mark is one cell away from a right one.
+        $da = $devices[$r.DeviceID].Area
+        if ($da -ne $r.Area) {
+            $errors.Add("34_Interlocks: $($r.Area) $($r.Target) is marked for '$($r.DeviceID)', which belongs to area $da - a target is ANDed from its own area's devices, so this mark would build nothing")
+        }
+    }
+    # An exclusion is a per-device fact with no cell to live in, so it gets its own tab -
+    # and the reason is the whole content of the row.
+    $excl = @{}
+    foreach ($r in $tabs['34_Exclusions']) {
+        if (-not $r.DeviceID) { continue }
+        if (-not $devices.ContainsKey($r.DeviceID)) { $errors.Add("34_Exclusions: unknown DeviceID '$($r.DeviceID)'"); continue }
+        if (-not $r.Rationale) { $errors.Add("34_Exclusions $($r.DeviceID): a Rationale is required - it is the entire content of the row"); continue }
+        $excl[$r.DeviceID] = $true
     }
     # Coverage: a device that is wired has a safety result, and that result either feeds the
     # trip path or is explicitly excluded with a reason. Silence is the failure mode this
     # catches - a device present, evaluated, and quietly contributing to nothing.
     $wired = @{}
     foreach ($g in $group.Keys) { $wired[(($g -split '\|', 2)[0])] = $true }
-    $inAny = @{}
-    foreach ($r in $tabs['34_Interlocks']) { $inAny[$r.DeviceID] = $true }
-    foreach ($did in $wired.Keys) {
+    foreach ($did in ($wired.Keys | Sort-Object)) {
         if (-not $devices.ContainsKey($did)) { continue }
-        if (-not $inAny.ContainsKey($did)) {
-            $errors.Add("34_Interlocks: $did has channels and a certified result but appears in no interlock row - include it, or exclude it with a Rationale")
+        if ($inter.ContainsKey($did)) {
+            if ($excl.ContainsKey($did)) {
+                $errors.Add("34_Exclusions: $did is listed as excluded but is also marked in 34_Interlocks - one of the two is wrong")
+            }
+            continue
         }
+        if ($excl.ContainsKey($did)) { continue }
+        $errors.Add("34_Interlocks: $did has channels and a certified result but is marked against no target - mark it, or list it in 34_Exclusions with a Rationale")
     }
 
     # 31_Policy drives certified-block generation, so every wired device/component pair

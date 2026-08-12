@@ -67,16 +67,17 @@ function Invoke-TiaBuildFromSheet {
     $phaseTabs = @{
         'Project'    = @('10_Project')
         'Hardware'   = @('10_Project','20_Stations','21_Modules')
-        # UDTs reads 22_Devices too: the Area UDTs are generated from the device list.
-        'UDTs'       = @('30_UDTs','22_Devices')
-        'DB'         = @('22_Devices','30_UDTs','32_Blocks')
+        # Since v1.8 a device IS a member of its area's UDT, so every phase that used to
+        # read 22_Devices reads 30_UDTs instead.
+        'UDTs'       = @('30_UDTs')
+        'DB'         = @('30_UDTs','32_Blocks')
         'Tags'       = @('23_Channels','21_Modules')
-        'IOMap'      = @('23_Channels','22_Devices')
-        'Certified'  = @('31_Policy','33_SafetyBlocks','22_Devices','23_Channels')
-        'Interlocks' = @('34_Interlocks','22_Devices')
+        'IOMap'      = @('23_Channels','30_UDTs')
+        'Certified'  = @('31_Policy','33_SafetyBlocks','30_UDTs','23_Channels')
+        'Interlocks' = @('34_Interlocks','34_Exclusions','30_UDTs')
     }
-    $allTabs = @('10_Project','20_Stations','21_Modules','22_Devices','23_Channels','30_UDTs',
-                 '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
+    $allTabs = @('10_Project','20_Stations','21_Modules','23_Channels','30_UDTs',
+                 '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','34_Exclusions','35_Outputs')
 
     $val = Test-TiaDesignSheet -Path $Path -RequireVerified:$RequireVerified
     Write-Host "design: $($val.Summary)"

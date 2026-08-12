@@ -14,7 +14,7 @@ declarative generators:
 - `Invoke-TiaBuildFromSpec` - a whole project from a YAML manifest + CSVs + SCL.
 - `Invoke-TiaSheetPipeline` - a whole **safety** project from a design workbook, in eight
   gated phases (Project, Hardware, UDTs, DB, Tags, IOMap, Certified, Interlocks). The
-  schema contract is `docs/DESIGN-SHEET.md` (currently **v1.6**); `Test-TiaDesignSheet`
+  schema contract is `docs/DESIGN-SHEET.md` (currently **v1.9**); `Test-TiaDesignSheet`
   validates it offline, with no TIA and no network. This is the path SR_PPS uses.
 
 ## Hard constraints (do not violate)

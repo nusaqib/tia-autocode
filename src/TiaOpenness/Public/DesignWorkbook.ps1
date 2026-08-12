@@ -66,12 +66,22 @@ function Export-TiaDesignWorkbook {
     $sheetXml = @{}
     foreach ($tab in $tabs) {
         $cols = $tab.Cols
+        # A matrix tab is 2 key columns and then one narrow marked column per device. Laid
+        # out like an ordinary tab it is unreadable: 40-odd columns of 20-character headers
+        # scrolled away from the row labels. Rotate the headers, narrow the columns, and
+        # freeze the keys, so it reads as the cause-and-effect grid it is.
+        $mtxKeys = if ($script:TiaSheetMatrixTabs.Contains($tab.Name)) { @($script:TiaSheetMatrixTabs[$tab.Name]) } else { @() }
         $sb = New-Object System.Text.StringBuilder
         [void]$sb.Append('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
         [void]$sb.Append('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">')
         # freeze the header row - these tabs are long and get scrolled a lot
         [void]$sb.Append('<sheetViews><sheetView workbookViewId="0">')
-        [void]$sb.Append('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>')
+        if ($mtxKeys.Count) {
+            [void]$sb.Append(('<pane xSplit="{0}" ySplit="1" topLeftCell="{1}2" activePane="bottomRight" state="frozen"/>' -f
+                $mtxKeys.Count, (ConvertTo-TiaXlsxColumn -Index $mtxKeys.Count)))
+        } else {
+            [void]$sb.Append('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>')
+        }
         [void]$sb.Append('</sheetView></sheetViews>')
 
         # width from the widest of header and a sample of values, clamped to something sane
@@ -84,15 +94,18 @@ function Export-TiaDesignWorkbook {
                 if ($v.Length -gt $w) { $w = $v.Length }
                 if (++$seen -ge 200) { break }
             }
-            $w = [Math]::Max(9, [Math]::Min(52, $w + 2))
+            # a mark column carries one character; its header is rotated, not laid flat
+            if ($mtxKeys.Count -and $i -ge $mtxKeys.Count) { $w = 4 }
+            else { $w = [Math]::Max(9, [Math]::Min(52, $w + 2)) }
             [void]$sb.Append(('<col min="{0}" max="{0}" width="{1}" customWidth="1"/>' -f ($i + 1), $w))
         }
         [void]$sb.Append('</cols><sheetData>')
 
         [void]$sb.Append('<row r="1">')
         for ($i = 0; $i -lt $cols.Count; $i++) {
-            [void]$sb.Append(('<c r="{0}1" s="1" t="inlineStr"><is><t xml:space="preserve">{1}</t></is></c>' -f
-                (ConvertTo-TiaXlsxColumn -Index $i), (Esc $cols[$i])))
+            $hs = if ($mtxKeys.Count -and $i -ge $mtxKeys.Count) { '2' } else { '1' }
+            [void]$sb.Append(('<c r="{0}1" s="{1}" t="inlineStr"><is><t xml:space="preserve">{2}</t></is></c>' -f
+                (ConvertTo-TiaXlsxColumn -Index $i), $hs, (Esc $cols[$i])))
         }
         [void]$sb.Append('</row>')
 
@@ -103,8 +116,9 @@ function Export-TiaDesignWorkbook {
             for ($i = 0; $i -lt $cols.Count; $i++) {
                 $v = [string]$r.($cols[$i])
                 if ([string]::IsNullOrEmpty($v)) { continue }
-                [void]$sb.Append(('<c r="{0}{1}" t="inlineStr"><is><t xml:space="preserve">{2}</t></is></c>' -f
-                    (ConvertTo-TiaXlsxColumn -Index $i), $rn, (Esc $v)))
+                $cs = if ($mtxKeys.Count -and $i -ge $mtxKeys.Count) { ' s="3"' } else { '' }
+                [void]$sb.Append(('<c r="{0}{1}"{2} t="inlineStr"><is><t xml:space="preserve">{3}</t></is></c>' -f
+                    (ConvertTo-TiaXlsxColumn -Index $i), $rn, $cs, (Esc $v)))
             }
             [void]$sb.Append('</row>')
         }
@@ -123,13 +137,22 @@ function Export-TiaDesignWorkbook {
                     'showErrorMessage="1" sqref="{0}2:{0}5000"><formula1>"{1}"</formula1></dataValidation>' -f
                     $letter, (Esc $list))
         }
-        foreach ($vc in @('Verified','Include','InInterlock','FailsafeCompliant')) {
+        foreach ($vc in @('Verified','FailsafeCompliant')) {
             $ci = [array]::IndexOf($cols, $vc)
             if ($ci -lt 0) { continue }
             if ($script:TiaSheetEnums.ContainsKey("$($tab.Name).$vc")) { continue }
             $letter = ConvertTo-TiaXlsxColumn -Index $ci
             $dv += ('<dataValidation type="list" allowBlank="1" showInputMessage="1" ' +
                     'showErrorMessage="1" sqref="{0}2:{0}5000"><formula1>"Yes,No"</formula1></dataValidation>' -f $letter)
+        }
+        # a mark column takes one value, so it is picked rather than typed - the validator
+        # rejects anything else, and this stops that being discovered two steps later
+        if ($mtxKeys.Count -and $cols.Count -gt $mtxKeys.Count) {
+            $dv += ('<dataValidation type="list" allowBlank="1" showInputMessage="1" ' +
+                    'showErrorMessage="1" sqref="{0}2:{1}5000"><formula1>"{2}"</formula1></dataValidation>' -f
+                    (ConvertTo-TiaXlsxColumn -Index $mtxKeys.Count),
+                    (ConvertTo-TiaXlsxColumn -Index ($cols.Count - 1)),
+                    $script:TiaSheetMatrixMark)
         }
         if ($dv.Count) {
             [void]$sb.Append(('<dataValidations count="{0}">{1}</dataValidations>' -f $dv.Count, ($dv -join '')))
@@ -146,8 +169,13 @@ function Export-TiaDesignWorkbook {
         '<fill><patternFill patternType="gray125"/></fill></fills>' +
         '<borders count="1"><border/></borders>' +
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>' +
+        '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+        # s=2 rotated header, s=3 centred cell - the matrix grid
+        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1">' +
+        '<alignment textRotation="90" horizontal="center" vertical="bottom"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1">' +
+        '<alignment horizontal="center"/></xf></cellXfs>' +
         '</styleSheet>'
 
     $ct = New-Object System.Text.StringBuilder

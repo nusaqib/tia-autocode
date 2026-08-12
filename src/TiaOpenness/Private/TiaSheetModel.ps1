@@ -17,6 +17,52 @@ function Get-TiaXlsxSheetName {
     } finally { $zip.Dispose() }
 }
 
+function Expand-TiaSheetInterlockMatrix {
+    <#
+    .SYNOPSIS
+        Expand the 34_Interlocks checkmark grid into one row per contributor.
+    .DESCRIPTION
+        34_Interlocks is authored as a cause-and-effect matrix: one row per (Area, Target),
+        one column per DeviceID, a mark where that device feeds that target. Everything
+        downstream wants the long form, so the grid is expanded once - here - and neither
+        the validator nor the build ever sees the matrix shape.
+
+        A cell is a mark or it is empty. Anything else comes back as a fault rather than a
+        guess: an unreadable cell must never quietly resolve to "not in the trip path",
+        which is the one failure mode a coverage matrix exists to prevent.
+    .OUTPUTS
+        Rows (Area, Target, DeviceID, Include='Yes'), Columns (the device columns, in
+        sheet order), Errors (unreadable cells).
+    #>
+    param([AllowEmptyCollection()][object[]]$Rows)
+
+    $marks = @('X', 'YES', 'Y', '1', 'TRUE')
+    $fixed = @('Area', 'Target')
+    $out = @(); $bad = @(); $cols = @()
+    if ($Rows -and $Rows.Count) {
+        $cols = @($Rows[0].PSObject.Properties.Name | Where-Object { $fixed -notcontains $_ })
+    }
+    $n = 0
+    foreach ($r in $Rows) {
+        $n++
+        if (-not $r) { continue }
+        foreach ($c in $cols) {
+            $v = ([string]$r.$c).Trim()
+            if (-not $v) { continue }
+            if ($marks -contains $v.ToUpperInvariant()) {
+                $out += [pscustomobject]@{
+                    Area   = [string]$r.Area; Target = [string]$r.Target
+                    DeviceID = $c; Include = 'Yes'; Row = $n
+                }
+            } else {
+                $bad += ("34_Interlocks row ${n} ($($r.Area) $($r.Target)): cell under '$c' is " +
+                         "'$v' - a cell is a mark (X) or empty, nothing else")
+            }
+        }
+    }
+    [pscustomobject]@{ Rows = $out; Columns = $cols; Errors = $bad }
+}
+
 function Read-TiaSheetModel {
     <#
     .SYNOPSIS
@@ -45,9 +91,16 @@ function Read-TiaSheetModel {
         Blocks       = T '32_Blocks'
         SafetyBlocks = T '33_SafetyBlocks'
         Interlocks   = T '34_Interlocks'
+        Exclusions   = T '34_Exclusions'
         Outputs      = T '35_Outputs'
     }
     $model = [pscustomobject]$m
+
+    # The interlock grid is an authoring shape, not a build shape. Expand it here so the
+    # phases keep consuming one row per contributor and never learn about columns.
+    $mx = Expand-TiaSheetInterlockMatrix -Rows $model.Interlocks
+    if ($mx.Errors.Count) { throw ($mx.Errors -join "`n") }
+    $model.Interlocks = $mx.Rows
 
     # A device IS a member of its area's UDT. Once 30_UDTs declares those areas explicitly
     # there is nothing left for 22_Devices to say that the UDT row does not, so the device

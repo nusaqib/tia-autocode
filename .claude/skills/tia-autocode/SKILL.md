@@ -82,7 +82,7 @@ project repo's CI.
 For a **safety** system the manifest path is the wrong shape: every safety-relevant fact
 must be an explicit, reviewable cell with a drawing reference, not something inferred from
 a description or from list position. `Invoke-TiaSheetPipeline` builds a whole F-project
-from a design workbook. Schema contract: **`docs/DESIGN-SHEET.md` (v1.6)**.
+from a design workbook. Schema contract: **`docs/DESIGN-SHEET.md` (v1.9)**.
 
 ```
 design/<book>.xlsx --Sync-TiaDesignSheet--> design/csv/  [COMMITTED - the build input]

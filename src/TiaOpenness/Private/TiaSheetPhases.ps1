@@ -89,9 +89,9 @@ function Get-TiaSheetAreaUdtRows {
         system F-DB. These rows are shaped exactly like 30_UDTs rows so they flow through
         the same ordering, F-compliance check and XML emitter as the authored types.
 
-        They are DERIVED from 22_Devices and never authored: an area's contents are the
-        devices assigned to it, and a hand-maintained copy of that list would be a second
-        source of truth that silently goes stale as devices move.
+        Since v1.8 these types are AUTHORED in 30_UDTs and this generator is the fallback
+        for a sheet that predates that - authored rows always win. A device is a member of
+        its area's UDT, so the type row already carries the name, type and description.
 
         Every area also carries Area_Reset / Interlocks_OK / Area_Safe. The certified calls
         acknowledge against Area_Reset and the safety layer writes the other two, so without
@@ -118,10 +118,10 @@ function Get-TiaSheetAreaUdtRows {
         $name = Expand-TiaSheetPattern -Pattern $pattern -Values @{ Area = $z.Area }
         $order = 1; $seen = @{}
         foreach ($d in ($devs | Sort-Object Device)) {
-            if (-not $d.UDT) { throw "22_Devices $($d.DeviceID): no UDT" }
-            if ($udtNames -notcontains $d.UDT) { throw "22_Devices $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
+            if (-not $d.UDT) { throw "30_UDTs $($d.DeviceID): no UDT" }
+            if ($udtNames -notcontains $d.UDT) { throw "30_UDTs $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
             if ($seen.ContainsKey($d.Device)) {
-                throw ("22_Devices: area $($z.Area) has two devices named '$($d.Device)' " +
+                throw ("30_UDTs: area $($z.Area) has two devices named '$($d.Device)' " +
                        "($($seen[$d.Device]) and $($d.DeviceID)) - they would collide as members of $name")
             }
             $seen[$d.Device] = $d.DeviceID
@@ -301,7 +301,7 @@ function Invoke-TiaSheetIOMapPhase {
     .SYNOPSIS
         Phase 5 (IOMap): FB_<area>_IOMap copying each channel tag into its DB member.
     .DESCRIPTION
-        In  : 23_Channels (Invert, Paired), 22_Devices, reports/90_AddressMap.csv
+        In  : 23_Channels (Invert, Paired), 30_UDTs, reports/90_AddressMap.csv
         Out : FB_<area>_IOMap (F_LAD), one network per device/component
 
         SIGNAL SENSE. The project convention is fail-safe: at the PLC input 1 = OK and
@@ -470,7 +470,7 @@ function Invoke-TiaSheetCertifiedPhase {
     .SYNOPSIS
         Phase 6 (Certified): ESTOP1 / SFDOOR / EV1oo2DI per 31_Policy.
     .DESCRIPTION
-        In  : 31_Policy, 33_SafetyBlocks (overrides), 22_Devices, 23_Channels
+        In  : 31_Policy, 33_SafetyBlocks (overrides), 30_UDTs, 23_Channels
         Out : FB_<area>_Certified (F_LAD) with the instructions as multi-instance statics
         DISCTIME/TIME_DEL pins are left OPEN - the FlgNet importer rejects Time literals,
         so those safety parameters are set in TIA.
@@ -606,7 +606,7 @@ function Invoke-TiaSheetSafetyPhase {
     .SYNOPSIS
         Phase 7 (Safety): area interlocks + the safety runtime that calls every area block.
     .DESCRIPTION
-        In  : 34_Interlocks (Target, DeviceID, Member, Include), 22_Devices, 31_Policy
+        In  : 34_Interlocks (a target x device matrix), 34_Exclusions, 30_UDTs, 31_Policy
         Out : FB_<area>_Safety (device summaries + the area AND), and the safety runtime FB
               calling IOMap -> Certified -> Safety per area, in that order.
 
@@ -666,7 +666,7 @@ function Invoke-TiaSheetSafetyPhase {
                 # No summary member on this type, so more than one component would have
                 # nowhere to AND into - that is a design error, not something to average away.
                 if ($srcs.Count -gt 1) {
-                    throw ("22_Devices $($d.DeviceID): UDT '$($d.UDT)' has $($srcs.Count) components " +
+                    throw ("30_UDTs $($d.DeviceID): UDT '$($d.UDT)' has $($srcs.Count) components " +
                            "but no Device_Safe member to summarise them into.")
                 }
                 $contrib[$d.DeviceID] = $srcs[0]
@@ -763,7 +763,7 @@ function Invoke-TiaSheetDataPhase {
     .SYNOPSIS
         Phase 3 (Data): ONE system F-DB holding every area as a typed member.
     .DESCRIPTION
-        In  : 22_Devices (DeviceID, Area, Device, UDT), 30_UDTs, 32_Blocks
+        In  : 30_UDTs (the area types and their device members), 32_Blocks
         Out : DB_SR_PPS as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB, one member per
               area typed by that area's generated UDT (phase 2).
         Emitted as XML because ProgrammingLanguage=F_DB cannot be set from SCL - an
@@ -794,7 +794,7 @@ function Invoke-TiaSheetDataPhase {
         $members += [pscustomobject]@{ Name = $z.Area; Datatype = $u
                                        Comment = "$($z.Name) - $n device(s)" }
     }
-    if (-not $members.Count) { throw "22_Devices produced no DB members." }
+    if (-not $members.Count) { throw "30_UDTs produced no DB members." }
 
     # System-level summary, computed by the safety phase from every area's Area_Safe.
     $members += [pscustomobject]@{ Name = 'System_Safe'; Datatype = 'Bool'
