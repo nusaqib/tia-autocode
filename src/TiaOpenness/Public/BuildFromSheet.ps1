@@ -43,38 +43,72 @@ function Invoke-TiaBuildFromSheet {
         [ValidateSet('Hardware','Types','Data','Tags','IOMap','Certified','Safety')][string]$Phase = 'Hardware',
         [switch]$Force,
         [switch]$Save,
+        [switch]$RequireVerified,
         [string]$ReportPath
     )
     $ErrorActionPreference = 'Stop'
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not (Test-Path $Path)) { throw "No design snapshot at $Path" }
 
-    if ($Phase -ne 'Hardware') {
+    if (@('Hardware','Types') -notcontains $Phase) {
         throw ("Phase '$Phase' is not implemented yet. Its input/output contract is defined in " +
-               "the project's docs/BUILD.md; only 'Hardware' is built today.")
+               "the project's docs/BUILD.md; 'Hardware' and 'Types' are built today.")
     }
 
     # --- design gate ------------------------------------------------------------------
-    # Asymmetric on purpose: racks are inert, so an unrelated design error can be forced
-    # past. Certified safety logic is the trip path and gets no such escape hatch.
-    $val = Test-TiaDesignSheet -Path $Path
+    # Scoped to the phase's OWN input tabs (the contract in docs/BUILD.md): a missing
+    # polarity in 23_Channels must not block UDT creation, which never reads that tab.
+    # Anything global (stale snapshot, schema failure) blocks every phase.
+    $phaseTabs = @{
+        'Hardware'  = @('10_Project','20_Zones','21_Modules')
+        'Types'     = @('30_UDTs')
+        'Data'      = @('22_Devices','30_UDTs','32_Blocks')
+        'Tags'      = @('23_Channels','21_Modules')
+        'IOMap'     = @('23_Channels','22_Devices')
+        'Certified' = @('31_Policy','33_SafetyBlocks','22_Devices','23_Channels')
+        'Safety'    = @('34_Interlocks','22_Devices')
+    }
+    $allTabs = @('10_Project','20_Zones','21_Modules','22_Devices','23_Channels','30_UDTs',
+                 '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
+
+    $val = Test-TiaDesignSheet -Path $Path -RequireVerified:$RequireVerified
     Write-Host "design: $($val.Summary)"
-    if (-not $val.Ok) {
-        Write-Host "design validation FAILED with $($val.Errors.Count) error(s):" -ForegroundColor Yellow
-        foreach ($e in $val.Errors) { Write-Host "  $e" -ForegroundColor Yellow }
+    $mine = @(); $other = @()
+    foreach ($e in $val.Errors) {
+        $tab = @($allTabs | Where-Object { $e -like "$_*" }) | Select-Object -First 1
+        # no recognisable tab prefix => global (stale snapshot, schema, verified gate)
+        if (-not $tab -or $phaseTabs[$Phase] -contains $tab) { $mine += $e } else { $other += $e }
+    }
+    if ($other.Count) {
+        Write-Host "  $($other.Count) design error(s) outside phase '$Phase' inputs - not blocking:" -ForegroundColor DarkGray
+        foreach ($e in $other) { Write-Host "    $e" -ForegroundColor DarkGray }
+    }
+    if ($mine.Count) {
+        Write-Host "  $($mine.Count) design error(s) in phase '$Phase' inputs:" -ForegroundColor Yellow
+        foreach ($e in $mine) { Write-Host "    $e" -ForegroundColor Yellow }
+        # Racks are inert, so hardware may be forced past its own errors. Everything that
+        # ends up in the trip path may not - and -Force does not override that.
         if ($Phase -ne 'Hardware') {
-            throw "Design does not validate - phase '$Phase' will not run. -Force does not override this."
+            throw "Design errors in phase '$Phase' inputs - it will not run. -Force does not override this."
         }
         if (-not $Force) {
             throw ("Design does not validate. Fix it, or re-run with -Force to build HARDWARE " +
-                   "only from the verified rack rows (safety logic is never generated from an " +
-                   "invalid design).")
+                   "only from the verified rack rows.")
         }
         Write-Host "  -Force: continuing with the hardware phase only" -ForegroundColor Yellow
     }
 
     $model = Read-TiaSheetModel -Path $Path
     $proj  = $model.Project
+
+    if ($Phase -ne 'Hardware') {
+        if (-not $ProjectPath) { $ProjectPath = $proj['ProjectPath'] }
+        if (-not $ProjectPath) { $ProjectPath = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) ('_out\' + $proj['ProjectName']) }
+        $ProjectPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ProjectPath)
+        switch ($Phase) {
+            'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -Save:$Save }
+        }
+    }
 
     # --- hardware preconditions - these are never waived -------------------------------
     $fatal = @()
@@ -113,6 +147,7 @@ function Invoke-TiaBuildFromSheet {
         Remove-Item $ProjectPath -Recurse -Force
     }
     Connect-TiaPortal -New -WithUserInterface:$false | Out-Null
+    try {
     $cpuFw = $proj['CpuFW']
     $cpuTid = "OrderNumber:$($proj['CpuMLFB'])" + $(if ($cpuFw) { if ($cpuFw -like '/*') { $cpuFw } else { "/$cpuFw" } } else { '' })
     New-TiaProject -Name $proj['ProjectName'] -Path (Split-Path -Parent $ProjectPath) | Out-Null
@@ -222,6 +257,11 @@ function Invoke-TiaBuildFromSheet {
     Write-Host ("addresses: {0} module rows -> {1}" -f $addr.Count, $ReportPath)
 
     if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        # Always release the project. Leaving the Portal instance up holds a lock, and the
+        # next phase fails with "already been opened by user ... 2 minute delay".
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
 
     [pscustomobject]@{
         Ok           = ($failed.Count -eq 0 -and $cErr -eq 0)

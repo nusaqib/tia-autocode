@@ -64,6 +64,46 @@ function Add-TiaModuleProbed {
     $null
 }
 
+function Get-TiaUdtBuildOrder {
+    <#
+    .SYNOPSIS
+        Order UDT names so every type is created after the types it references.
+    .DESCRIPTION
+        A UDT whose member is another UDT cannot be created first - TIA rejects the
+        unknown type. Returns the names in a safe creation order and throws on a
+        dependency cycle (which would otherwise fail as a confusing "unknown type").
+    #>
+    param([Parameter(Mandatory)]$Rows)
+    $members = @{}
+    foreach ($r in $Rows) {
+        if (-not $r.UDT) { continue }
+        if (-not $members.ContainsKey($r.UDT)) { $members[$r.UDT] = @() }
+        $members[$r.UDT] += $r
+    }
+    $names = @($members.Keys)
+    $deps = @{}
+    foreach ($n in $names) {
+        $d = @()
+        foreach ($m in $members[$n]) {
+            $t = ([string]$m.Datatype).Trim().Trim('"')
+            if ($names -contains $t -and $t -ne $n) { $d += $t }
+        }
+        $deps[$n] = @($d | Select-Object -Unique)
+    }
+    $order = New-Object System.Collections.Generic.List[string]
+    $state = @{}   # 1 = visiting, 2 = done
+    function Visit-Udt([string]$n, $path) {
+        if ($state[$n] -eq 2) { return }
+        if ($state[$n] -eq 1) { throw "30_UDTs: circular reference $($path -join ' -> ') -> $n" }
+        $state[$n] = 1
+        foreach ($d in $deps[$n]) { Visit-Udt $d ($path + $n) }
+        $state[$n] = 2
+        $order.Add($n)
+    }
+    foreach ($n in ($names | Sort-Object)) { Visit-Udt $n @() }
+    $order
+}
+
 function Get-TiaModuleAddress {
     <#
     .SYNOPSIS

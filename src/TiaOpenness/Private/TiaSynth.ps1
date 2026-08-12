@@ -39,7 +39,12 @@ function ConvertTo-TiaUdtScl {
         [void]$out.AppendLine("STRUCT")
         foreach ($m in $grp.Group) {
             $type = Format-TiaMemberType $m.DataType $m.Array
-            $line = "   $($m.Member) : $type"
+            # A member name that is not a bare-legal identifier (e.g. "1oo2_OK", which
+            # starts with a digit) must be quoted or SCL fails with a syntax error on that
+            # row. TIA accepts the quoted form; XML import never hits this.
+            $name = if ($m.Member -match '^[A-Za-z_][A-Za-z0-9_]*$') { $m.Member }
+                    else { '"' + ([string]$m.Member).Trim('"') + '"' }
+            $line = "   $name : $type"
             if ($m.StartValue) { $line += " := $($m.StartValue)" }
             $line += ";"
             if ($m.Comment) { $line += "   // $($m.Comment)" }
