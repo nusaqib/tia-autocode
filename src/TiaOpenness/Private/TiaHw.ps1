@@ -120,15 +120,24 @@ function Set-TiaStationNetwork {
     #>
     param($Node, $Interface, [string]$IpAddress, [string]$SubnetMask,
           [string]$DeviceNumber, [string]$DeviceName)
-    $applied = @(); $failed = @()
+    $applied = @(); $failed = @(); $inherited = @()
 
     if ($IpAddress -and $Node) {
         try { $Node.SetAttribute('Address', $IpAddress); $applied += "ip=$IpAddress" }
         catch { $failed += "Address: $($_.Exception.Message)" }
     }
     if ($SubnetMask -and $Node) {
+        # An IO device takes its mask FROM the IO controller ("IP address is set directly at
+        # the device" is off by default), so the node exposes no SubnetMask setter and throws
+        # 'set_SubnetMask is not supported'. That is the normal, correct ET200SP arrangement -
+        # not a build failure - so it is reported as Inherited rather than Failed. The mask
+        # still belongs in the sheet: it is a reviewable network fact and the validator
+        # enforces one mask per IO system.
         try { $Node.SetAttribute('SubnetMask', $SubnetMask); $applied += "mask=$SubnetMask" }
-        catch { $failed += "SubnetMask: $($_.Exception.Message)" }
+        catch {
+            if ($_.Exception.Message -match "set_SubnetMask' is not supported") { $inherited += 'SubnetMask' }
+            else { $failed += "SubnetMask: $($_.Exception.Message)" }
+        }
     }
     if ($DeviceName -and $Node) {
         # the PROFINET name is generated from the station name unless auto-generation is
@@ -151,7 +160,7 @@ function Set-TiaStationNetwork {
             }
         } else { $failed += "DeviceNumber '$DeviceNumber' is not an integer" }
     }
-    [pscustomobject]@{ Applied = $applied; Failed = $failed }
+    [pscustomobject]@{ Applied = $applied; Failed = $failed; Inherited = $inherited }
 }
 
 function Set-TiaDeviceComment {

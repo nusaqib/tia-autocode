@@ -174,7 +174,7 @@ function Invoke-TiaBuildFromSheet {
     $cpuDev = $project.Devices | Where-Object { $_.Name -eq $proj['PlcName'] } | Select-Object -First 1
     if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' was not created." }
 
-    $plugged = 0; $failed = @(); $stations = @(); $netWarn = @(); $labelled = 0
+    $plugged = 0; $failed = @(); $stations = @(); $netWarn = @(); $netInherit = @(); $labelled = 0
     $niType = [Siemens.Engineering.HW.Features.NetworkInterface]
 
     # --- CPU-local area: modules ride the CPU's own ET200SP rack ------------------------
@@ -219,6 +219,7 @@ function Invoke-TiaBuildFromSheet {
             $cn = Set-TiaStationNetwork -Node ($cpuNi.Nodes | Select-Object -First 1) -Interface $cpuNi `
                       -IpAddress $lz.IP_Address -SubnetMask $lz.Subnet_Mask -DeviceName $lz.Device_Name
             foreach ($f in $cn.Failed) { $netWarn += "$($proj['PlcName']) : $f" }
+            foreach ($i in $cn.Inherited) { $netInherit += "$($proj['PlcName']):$i" }
             if ($cn.Applied.Count) { Write-Host ("  CPU network: " + ($cn.Applied -join ' ')) }
             $lzLabel = (@($lz.Description, $lz.Station_Label) | Where-Object { $_ } | Select-Object -Unique) -join ' - '
             if (Set-TiaDeviceComment -Device $cpuDev -Comment $lzLabel) { $labelled++ }
@@ -261,6 +262,7 @@ function Invoke-TiaBuildFromSheet {
         $net = Set-TiaStationNetwork -Node $imNode -Interface $imNi -IpAddress $z.IP_Address `
                    -SubnetMask $z.Subnet_Mask -DeviceNumber $z.Device_Number -DeviceName $z.Device_Name
         foreach ($f in $net.Failed) { $netWarn += "$station : $f" }
+        foreach ($i in $net.Inherited) { $netInherit += "${station}:$i" }
 
         Write-Host ("  {0,-9} {1,2}/{2} modules -> IO system{3}" -f $station, $n, $mods.Count,
                     $(if ($net.Applied.Count) { '  ' + ($net.Applied -join ' ') } else { '' }))
@@ -268,6 +270,13 @@ function Invoke-TiaBuildFromSheet {
     }
 
     Write-Host ("  as-built labels written to device comments: {0}" -f $labelled)
+    if ($netInherit.Count) {
+        # Not a failure: an IO device whose IP is assigned by the controller has no writable
+        # SubnetMask. Reported so the sheet value is not mistaken for something that was applied.
+        $names = @($netInherit | ForEach-Object { ($_ -split ':')[0] })
+        Write-Host ("  {0} station(s) inherit SubnetMask from the IO controller (not writable per device): {1}" -f
+                    $names.Count, ($names -join ', ')) -ForegroundColor DarkGray
+    }
     if ($netWarn.Count) {
         Write-Host "  $($netWarn.Count) network attribute(s) could not be set (names vary by TIA version):" -ForegroundColor Yellow
         foreach ($w in $netWarn) { Write-Host "    $w" -ForegroundColor Yellow }

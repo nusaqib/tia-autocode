@@ -138,6 +138,12 @@ the sheet can carry project notes.
   `IO_System` must share it. `255.255.255.1` is a well-formed dotted quad, a nonsense mask,
   and precisely what dragging an Excel fill handle down the column produces.
 
+  An **IO device** takes its mask from the IO controller, so Openness exposes no per-device
+  setter (`set_SubnetMask is not supported`). The build reports those stations as
+  *inheriting* rather than failing. The column still earns its place: it is a reviewable
+  network fact, it is applied to the controller, and the one-mask-per-IO-system rule catches
+  a subnet the design never intended.
+
 > Named `20_Stations`, **not** a "Devices" tab: `22_Devices` already means field devices
 > (crash-off buttons, gates, detectors). Two tabs both called Device would give `DeviceID`
 > and `DeviceRef` two different meanings in a safety review.
