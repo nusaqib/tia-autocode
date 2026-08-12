@@ -166,7 +166,7 @@ function Set-TiaStationNetwork {
 function Set-TiaDeviceComment {
     <#
     .SYNOPSIS
-        Write the as-built label onto a device's Comment (device properties / network view).
+        Write the station description onto a device's Comment (device properties / network view).
     .DESCRIPTION
         This is where a rack label like "SAFETY RACK S1014" belongs: TIA exposes a writable
         Comment on the Device and on its head DeviceItem, and no plant-designation field is

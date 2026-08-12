@@ -142,12 +142,13 @@ two devices onto one certified instance.
 
 **`20_Stations`** - one row per ET200SP station on the PROFINET IO system.
 
-`Area, Name, Description, Station_Name, Station_Label, IM_MLFB, IM_FW, IO_System, IP_Address, Subnet_Mask, Device_Number, Device_Name, Verified, Notes`
+`Area, Name, Description, Station_Name, IM_MLFB, IM_FW, IO_System, IP_Address, Subnet_Mask, Device_Number, Device_Name, Verified, Notes`
 
 - `Area` - short code, primary key (`BTA`, `MCR`, `S01_FE`), and the `{Area}` placeholder.
 - `Station_Name` - the station's name **in the TIA project tree** (`IOD_BTA`).
-- `Station_Label` - the as-built rack designation, written to the device's `Comment` (the
-  only writable label Openness exposes; it shows in device properties and the network view).
+- `Description` - written to the device's `Comment` (the only writable label Openness
+  exposes; it shows in device properties and the network view). *(Removed in v1.7:
+  `Station_Label`, which duplicated `Station_Name` verbatim.)*
 - `IM_MLFB`/`IM_FW` - head module; blank when the area is the CPU's own rack.
 - `IP_Address`/`Subnet_Mask` - pinned PROFINET addressing. **Blank means "let TIA assign"**;
   a value is applied to the interface node.
@@ -175,7 +176,7 @@ two devices onto one certified instance.
 
 **`21_Modules`** - one row per plugged module.
 
-`Area, Slot, Kind, MLFB, FW, ModuleName, InputBytes, F_DestAddr, F_MonitorTime, AsBuiltRail, DrawingRef, Verified, Comment`
+`Area, Slot, Kind, MLFB, FW, ModuleName, InputBytes, F_DestAddr, F_MonitorTime, DrawingRef, Verified, Comment`
 
 - `Kind` enum: `IM`, `F-DI`, `F-DQ`, `F-RQ`, `DI`, `DQ`.
 - `(Area, Slot)` unique. `ModuleName` unique within an area - `23_Channels` joins on
@@ -196,9 +197,6 @@ two devices onto one certified instance.
   bus jitter; too long and the safety reaction time grows. Blank means TIA derives it;
   setting it switches `Failsafe_ManualAssignmentFMonitoringtime` on first, because the
   attribute is read-only while it is derived.
-- `AsBuiltRail` - which physical rail/row the module sits on. **Documentation only**: it is
-  not applied to the project and not validated, and exists so a reader can find the module
-  in the cabinet.
 
 > **Sensor evaluation is NOT a column** (removed in v1.5). Openness exposes no
 > sensor-evaluation parameter at all - an F-DI has 37 `Failsafe_*` attributes and none of
@@ -221,7 +219,7 @@ two devices onto one certified instance.
 
 **`23_Channels`** - one row per physical channel. **The heart of the schema.**
 
-`ChannelID, DeviceID, Component, Signal, Paired, Invert, Slot, Channel, Terminal, LegacyTagName, ModuleName, DrawingRef, Description, Verified`
+`ChannelID, DeviceID, Component, Signal, Paired, Invert, Slot, Channel, Terminal, ModuleName, DrawingRef, Description, Verified`
 
 - `Signal` enum: `ChA`, `ChB`, `Diag`.
 - `Paired` (`Yes`/`No`) - `No` means genuinely single-channel (1oo1). Never inferred.
@@ -229,10 +227,16 @@ two devices onto one certified instance.
   fail-safe: at the PLC input `1 = OK`, `0 = fault/demand`, so a channel maps straight
   through and everything downstream reads "1 = safe". `Invert=Yes` marks a device wired
   against that convention, and the IOMap emits a **negated contact** for it.
-- `Slot`/`Channel`/`Terminal` - the as-built wiring, which is the only wiring.
-- `LegacyTagName` - the existing plant tag, carried for traceability. Generated tag names
-  come from `10_Project.TagPattern`; this column is never used as a tag.
+- `Slot`/`Channel` - where the signal lands in the rack this project builds.
+  `Terminal` - the field terminal it arrives on.
 - `(Area, Slot, Channel)` must be unique - no two signals on one channel.
+
+> **`LegacyTagName` was removed in v1.7.** It held the tag the *previous* system used for
+> the same contact, and existed to cross-check a seeded design against the plant being
+> replaced. Nothing in the build ever read it. Once a design is authored rather than
+> inferred it becomes a second identity for a device, inviting a reader to trust whichever
+> of the two names they saw last - so provenance moved to git history, and a device
+> grouping is now justified by `DrawingRef`.
 
 > **`Invert` replaced `Polarity` (`NC`/`NO`) in v1.3.** `Polarity` restated the same fact
 > on every one of 184 rows and left a blank meaning "unknown", which forced a hard error and
@@ -247,7 +251,7 @@ two devices onto one certified instance.
 
 > **Removed in v1.1: `DesignSlot`/`DesignChannel`.** They expressed the in-module re-map
 > that *firmware* 1oo2 requires (ChA/ChB on channel *n* and *n+4* of one module). When 1oo2
-> is evaluated in software the as-built wiring stands, and ChA/ChB on **separate modules**
+> is evaluated in software the wiring as designed stands, and ChA/ChB on **separate modules**
 > is the better arrangement - a single module failure cannot take both channels of a pair.
 > Keeping a second set of wiring columns after that decision would only create ambiguity
 > about which wiring is real.
@@ -332,6 +336,14 @@ Exit code is non-zero on any error. Warnings do not fail the build but are print
 
 ## Schema history
 
+- **v1.7** - **the legacy / as-built record is retired.** `23_Channels.LegacyTagName`,
+  `21_Modules.AsBuiltRail` and `20_Stations.Station_Label` REMOVED. None was read by the
+  build: the first two were traceability against the system being replaced, and the third
+  duplicated `Station_Name` verbatim. A design that is authored rather than inferred does
+  not need the old plant's names, and carrying them gives every device a second identity.
+  `Terminal` is kept - it is the field terminal in the design being built, not a record of
+  what is being replaced. **Consequence:** provenance is now git history, and any device
+  grouping previously justified by an old tag must be justified by a `DrawingRef`.
 - **v1.6** - **device UDTs carry the certified diagnostics.** `UDT_SafeInput` is renamed
   throughout (`1oo2_OK` -> `Eval_OK`; `Discrepancy` -> `Disc_Flt`; `AckReq` -> `Ack_Req`)
   and loses `Fault`, `Latch` and `Device_Safe` - dormant members that a reader would take

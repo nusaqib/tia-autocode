@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.6'
+$script:TiaSheetSchemaVersion = '1.7'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -88,12 +88,29 @@ $script:TiaSheetSchemaVersion = '1.6'
 #     Siemens intends for a STANDARD DB. New validation rule 16 catches the whole class.
 #   - New authored types UDT_EMO (adds Safe_Delayed for ESTOP1.Q_DELAY) and UDT_Door
 #     (SFDOOR alone - no Eval_OK/Disc_Flt, since SFDOOR has neither pin).
+#
+# v1.7 changes - the legacy/as-built record is retired:
+#   - 23_Channels.LegacyTagName REMOVED. It held the old system's tag for the same
+#     contact. Nothing in the build ever read it; it existed to cross-check a seeded
+#     design against the system being replaced. Once a design is authored rather than
+#     inferred, that column is a second identity for a device and invites the reader to
+#     trust whichever of the two names they saw last.
+#   - 21_Modules.AsBuiltRail REMOVED. Recorded which physical rail a module sat on in the
+#     old rack. Never read; the rack this project builds is described by Area+Slot.
+#   - 20_Stations.Station_Label REMOVED. It duplicated Station_Name verbatim and was only
+#     folded into the station's device comment, where it deduplicated to nothing.
+#   - Terminal is KEPT: it is the field terminal a device lands on in the design being
+#     built, not a record of the system being replaced.
+#
+#   Consequence to be aware of: the seeded provenance is now git history, not sheet data.
+#   Any device grouping that was justified by a legacy tag must be justified by a drawing
+#   reference from here on - which is what DrawingRef is for.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
-    '20_Stations'    = @('Area','Name','Description','Station_Name','Station_Label','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
-    '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','AsBuiltRail','DrawingRef','Verified','Comment')
+    '20_Stations'    = @('Area','Name','Description','Station_Name','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
+    '21_Modules'     = @('Area','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','DrawingRef','Verified','Comment')
     '22_Devices'     = @('DeviceID','Area','Device','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
-    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
+    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Invert','Slot','Channel','Terminal','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
     '31_Policy'      = @('PolicyID','DeviceType','Component','UDT','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
     '32_Blocks'      = @('Block','Area','Layer','Language','Number','Description')

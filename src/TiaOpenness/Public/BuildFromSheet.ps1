@@ -12,7 +12,7 @@ function Invoke-TiaBuildFromSheet {
 
           Project     the project file and the CPU
           Hardware    one station per area, every module at its slot, one PROFINET subnet
-                      + IO system, the as-built labels, and the assigned-address read-back
+                      + IO system, the station descriptions, and the assigned-address read-back
           UDTs        the authored device types plus one GENERATED type per area
           DB          one system F-DB with every area as a typed member
           Tags        one PLC tag per channel at its live address
@@ -259,8 +259,7 @@ function Invoke-TiaBuildFromSheet {
             foreach ($f in $cn.Failed) { $netWarn += "$($proj['PlcName']) : $f" }
             foreach ($i in $cn.Inherited) { $netInherit += "$($proj['PlcName']):$i" }
             if ($cn.Applied.Count) { Write-Host ("  CPU network: " + ($cn.Applied -join ' ')) }
-            $lzLabel = (@($lz.Description, $lz.Station_Label) | Where-Object { $_ } | Select-Object -Unique) -join ' - '
-            if (Set-TiaDeviceComment -Device $cpuDev -Comment $lzLabel) { $labelled++ }
+            if (Set-TiaDeviceComment -Device $cpuDev -Comment ([string]$lz.Description)) { $labelled++ }
         }
     }
     Write-Host ("  subnet '{0}', IO system '{1}'" -f $subnet.Name, $ioSystem.Name)
@@ -275,8 +274,7 @@ function Invoke-TiaBuildFromSheet {
         $iod = $project.Devices | Where-Object { $_.Name -eq $station } | Select-Object -First 1
         if (-not $iod) { throw "Station '$station' was not created (IM $imTid)." }
 
-        $label = (@($z.Description, $z.Station_Label) | Where-Object { $_ } | Select-Object -Unique) -join ' - '
-        if (Set-TiaDeviceComment -Device $iod -Comment $label) { $labelled++ }
+        if (Set-TiaDeviceComment -Device $iod -Comment ([string]$z.Description)) { $labelled++ }
 
         $items = Get-TiaDeviceItemTree -Device $iod
         $rack = $items | Where-Object { $_.Name -eq 'Rack_0' } | Select-Object -First 1
@@ -317,7 +315,7 @@ function Invoke-TiaBuildFromSheet {
         $stations += [pscustomobject]@{ Area = $z.Area; Station = $station; Device = $iod; Local = $false }
     }
 
-    Write-Host ("  as-built labels written to device comments: {0}" -f $labelled)
+    Write-Host ("  station descriptions written to device comments: {0}" -f $labelled)
     if ($fParam.Count) {
         $declared = @($fParam | Where-Object { $_.DeclaredDestAddr })
         Write-Host ("  PROFIsafe: {0} F-module(s), {1} with a declared F_DestAddr, {2} auto-assigned by TIA" -f
