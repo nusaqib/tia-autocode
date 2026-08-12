@@ -451,6 +451,134 @@ function Invoke-TiaSheetCertifiedPhase {
     }
 }
 
+function Invoke-TiaSheetSafetyPhase {
+    <#
+    .SYNOPSIS
+        Phase 7 (Safety): zone interlocks + the safety runtime that calls every zone block.
+    .DESCRIPTION
+        In  : 34_Interlocks (Target, DeviceID, Member, Include), 22_Devices, 31_Policy
+        Out : FB_<zone>_Safety (device summaries + the zone AND), and the safety runtime FB
+              calling IOMap -> Certified -> Safety per zone, in that order.
+
+        Device_Safe is COMPUTED here from each component's terminal certified output. It is
+        not written anywhere else, so an interlock ANDing it directly would AND a member
+        nothing ever sets - permanently false, which looks safe and is silently broken.
+    #>
+    param($Model, [string]$ProjectPath, [string]$XmlDir, [string]$AddressMapPath,
+          [switch]$AssumeDefaultPolarity, [switch]$Save)
+
+    $chan = Get-TiaSheetChannelPlan -Model $Model -AddressMapPath $AddressMapPath
+    $cert = Get-TiaSheetCertifiedPlan -Model $Model -ChannelPlan $chan
+
+    # terminal member per device+component: the LAST instruction in the chain decides
+    # whether the usable result is .Safe (ESTOP1/SFDOOR) or .1oo2_OK (EV1oo2DI alone)
+    $terminal = @{}
+    foreach ($g in ($cert | Group-Object DeviceID, Component)) {
+        $last = @($g.Group | Sort-Object Order)[-1]
+        $terminal["$($last.DeviceID)|$($last.Component)"] =
+            $(if ($last.Instruction -eq 'EV1oo2DI') { "$($last.Stem).1oo2_OK" } else { "$($last.Stem).Safe" })
+    }
+
+    $fbPattern = $Model.Project['BlockPattern']
+    if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
+    $dbPattern = $Model.Project['DbPattern']
+    if (-not $dbPattern) { $dbPattern = 'DB_{Zone}' }
+
+    $built = @(); $skippedZones = @()
+    foreach ($z in $Model.Zones) {
+        $db = Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Zone = $z.Zone }
+        $units = @(); $id = 3
+
+        # one network per device: AND its components' terminal results into Device_Safe
+        $zoneDevs = @()
+        foreach ($d in @($Model.DevicesByZone[$z.Zone] | Sort-Object DeviceRef)) {
+            $comps = @($terminal.Keys | Where-Object { $_ -like "$($d.DeviceID)|*" })
+            if (-not $comps.Count) { continue }
+            $srcs = @($comps | Sort-Object | ForEach-Object { $terminal[$_] })
+            $b = New-TiaFlgBuilder
+            Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.DeviceRef).Device_Safe") | Out-Null
+            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($d.DeviceRef) Device_Safe")
+            $id += 5
+            $zoneDevs += $d
+        }
+
+        # the zone AND - only devices 34_Interlocks includes
+        $inc = @($Model.Interlocks | Where-Object { $_.Zone -eq $z.Zone -and $_.Include -eq 'Yes' })
+        $members = @()
+        foreach ($i in $inc) {
+            $d = $Model.DeviceById[$i.DeviceID]
+            if (-not $d) { continue }
+            if ($zoneDevs -notcontains $d) { continue }   # no certified result to contribute
+            $members += "$db.$($d.DeviceRef).Device_Safe"
+        }
+        if (-not $members.Count) { $skippedZones += $z.Zone; continue }
+        $b = New-TiaFlgBuilder
+        Add-TiaFlgSeriesRung -Builder $b -From $members -To @("$db.Interlocks_OK", "$db.Zone_Safe") | Out-Null
+        $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Zone) Interlocks_OK")
+
+        $name = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $z.Zone; Layer = 'Safety' }
+        $num  = Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Safety'
+        $xml  = New-TiaFailsafeFbXml -Name $name -Number $num -CompileUnits $units
+        Save-TiaMlDocument -Path (Join-Path $XmlDir "$name.xml") -Xml $xml | Out-Null
+        $built += [pscustomobject]@{ Zone = $z.Zone; Name = $name; Number = $num
+                                     Devices = $zoneDevs.Count; Contributors = $members.Count }
+    }
+
+    # the safety runtime: one network per zone calling IOMap -> Certified -> Safety
+    $rtName = $Model.Project['SafetyRuntimeFB']
+    if (-not $rtName) { $rtName = 'Main_Safety_RTG1' }
+    $rtUnits = @(); $rtStatics = @(); $rid = 3
+    foreach ($b in $built) {
+        $bu = New-TiaFlgBuilder
+        foreach ($layer in @('IOMap','Certified','Safety')) {
+            $blk = Expand-TiaSheetPattern -Pattern $fbPattern -Values @{ Zone = $b.Zone; Layer = $layer }
+            $inst = "${blk}_Instance"
+            $rtStatics += [pscustomobject]@{ Name = $inst; Datatype = $blk; Block = $true }
+            Add-TiaFlgCall -Builder $bu -Block $blk -InstanceName $inst | Out-Null
+        }
+        $rtUnits += (New-TiaFlgCompileUnit -Builder $bu -Id $rid -Title "$($b.Zone)")
+        $rid += 5
+    }
+    $rtNum = 1
+    $rtRow = @($Model.Blocks | Where-Object { $_.Layer -eq 'Runtime' }) | Select-Object -First 1
+    if ($rtRow -and $rtRow.Number) { $rtNum = [int]$rtRow.Number }
+    $rtXml = New-TiaFailsafeFbXml -Name $rtName -Number $rtNum -CompileUnits $rtUnits -Statics $rtStatics
+    Save-TiaMlDocument -Path (Join-Path $XmlDir "$rtName.xml") -Xml $rtXml | Out-Null
+
+    Write-Host ("safety: {0} zone block(s), runtime '{1}' calling {2} block(s)" -f
+                $built.Count, $rtName, $rtStatics.Count)
+    if ($skippedZones.Count) {
+        Write-Host ("  zones with no interlock contributors: {0}" -f ($skippedZones -join ', ')) -ForegroundColor Yellow
+    }
+
+    $cErr = 0; $compile = $null
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
+        foreach ($b in $built) {
+            Import-TiaBlockXml -Path (Join-Path $XmlDir "$($b.Name).xml") -Overwrite | Out-Null
+            Write-Host ("  {0,-20} FB{1,-4} {2,2} devices, {3,2} interlock contributors" -f
+                        $b.Name, $b.Number, $b.Devices, $b.Contributors)
+        }
+        Import-TiaBlockXml -Path (Join-Path $XmlDir "$rtName.xml") -Overwrite | Out-Null
+        Write-Host ("  {0,-20} FB{1}" -f $rtName, $rtNum)
+
+        $plc = Get-TiaPlc | Select-Object -First 1
+        $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+        try { $cErr = $compile.Errors } catch { }
+        Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+        if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
+
+    [pscustomobject]@{
+        Ok = ($cErr -eq 0); Phase = 'Safety'; ProjectPath = $ProjectPath
+        Blocks = @($built | ForEach-Object { $_.Name }); Runtime = $rtName
+        Contributors = (@($built | ForEach-Object { $_.Contributors }) | Measure-Object -Sum).Sum
+        CompileState = [string]$compile.State; CompileErrors = $cErr
+    }
+}
+
 function Invoke-TiaSheetDataPhase {
     <#
     .SYNOPSIS

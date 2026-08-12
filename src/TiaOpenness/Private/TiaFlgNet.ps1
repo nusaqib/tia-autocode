@@ -233,6 +233,62 @@ $tmpl
     $partUid
 }
 
+function Add-TiaFlgSeriesRung {
+    <#
+    .SYNOPSIS
+        Contacts in SERIES driving one or more coils - the AND that forms an interlock.
+    .DESCRIPTION
+        Only the FIRST contact touches the power rail; each subsequent contact's "in" is
+        wired from the previous contact's "out". That series chain IS the AND: one open
+        contact drops the coil.
+    #>
+    param([Parameter(Mandatory)]$Builder, [Parameter(Mandatory)][string[]]$From,
+          [Parameter(Mandatory)][string[]]$To)
+    if (-not $From.Count) { throw 'Add-TiaFlgSeriesRung needs at least one contact' }
+    $prev = $null
+    foreach ($f in $From) {
+        $a = Add-TiaFlgAccess -Builder $Builder -Path $f
+        $c = Add-TiaFlgPart -Builder $Builder -Name 'Contact'
+        if ($null -eq $prev) { $Builder.PowerrailPins.Add("${c}:in") }
+        else { Add-TiaFlgWire -Builder $Builder -FromPin "${prev}:out" -To @("${c}:in") | Out-Null }
+        Add-TiaFlgWire -Builder $Builder -FromAccess $a -To @("${c}:operand") | Out-Null
+        $prev = $c
+    }
+    $coilPins = @()
+    foreach ($t in $To) {
+        $a = Add-TiaFlgAccess -Builder $Builder -Path $t
+        $coil = Add-TiaFlgPart -Builder $Builder -Name 'Coil'
+        $coilPins += "${coil}:in"
+        Add-TiaFlgWire -Builder $Builder -FromAccess $a -To @("${coil}:operand") | Out-Null
+    }
+    Add-TiaFlgWire -Builder $Builder -FromPin "${prev}:out" -To $coilPins | Out-Null
+    $prev
+}
+
+function Add-TiaFlgCall {
+    <#
+    .SYNOPSIS
+        Call an FB as a multi-instance (the safety runtime calling each zone block).
+    #>
+    param([Parameter(Mandatory)]$Builder, [Parameter(Mandatory)][string]$Block,
+          [Parameter(Mandatory)][string]$InstanceName)
+    $Builder.Uid++
+    $callUid = $Builder.Uid
+    $Builder.Uid++
+    $instUid = $Builder.Uid
+    $Builder.Parts.Add(@"
+    <Call UId="$callUid">
+      <CallInfo Name="$(ConvertTo-TiaXmlText $Block)" BlockType="FB">
+        <Instance Scope="LocalVariable" UId="$instUid">
+          <Component Name="$(ConvertTo-TiaXmlText $InstanceName)" />
+        </Instance>
+      </CallInfo>
+    </Call>
+"@)
+    $Builder.PowerrailPins.Add("${callUid}:en")
+    $callUid
+}
+
 function New-TiaFlgCompileUnit {
     <#
     .SYNOPSIS
@@ -305,11 +361,21 @@ function New-TiaFailsafeFbXml {
         [void]$sb.AppendLine('  <Section Name="Static">')
         foreach ($s in $Statics) {
             $dt = Format-TiaMlDatatype $s.Datatype
-            [void]$sb.AppendLine("    <Member Name=""$(ConvertTo-TiaXmlText $s.Name)"" Datatype=""$dt"" Remanence=""NonRetain"" Accessibility=""Public"" />")
+            # A multi-instance of an FB rejects Remanence ("The attribute 'Remanence'
+            # cannot be set"); instruction instances accept it. Emit it only where valid.
+            $attrs = if ($s.PSObject.Properties['Block'] -and $s.Block) { '' }
+                     else { ' Remanence="NonRetain" Accessibility="Public"' }
+            [void]$sb.AppendLine("    <Member Name=""$(ConvertTo-TiaXmlText $s.Name)"" Datatype=""$dt""$attrs />")
         }
         [void]$sb.AppendLine('  </Section>')
     } else {
-        [void]$sb.AppendLine('  <Section Name="Static" />')
+        # An FB called as a multi-instance must have a NON-EMPTY interface: an empty one
+        # compiles to "A structure without components is not allowed" / "Invalid data type"
+        # at the caller. Stateless layers (IOMap, Safety) have nothing to keep, so they get
+        # one placeholder. The lab spike arrived at the same workaround.
+        [void]$sb.AppendLine('  <Section Name="Static">')
+        [void]$sb.AppendLine('    <Member Name="Reserved" Datatype="Bool" Remanence="NonRetain" Accessibility="Public" />')
+        [void]$sb.AppendLine('  </Section>')
     }
     [void]$sb.AppendLine('  <Section Name="Temp" />')
     [void]$sb.AppendLine('  <Section Name="Constant" />')
