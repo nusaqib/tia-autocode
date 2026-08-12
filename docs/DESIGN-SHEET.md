@@ -98,12 +98,19 @@ Unknown keys are a warning, not an error, so the sheet can carry project notes.
 
 **`21_Modules`** - one row per plugged module.
 
-`Zone, Slot, Kind, MLFB, FW, ModuleName, InputBytes, AsBuiltRail, DrawingRef, Verified, Comment`
+`Zone, Slot, Kind, MLFB, FW, ModuleName, InputBytes, F_DestAddr, F_MonitorTime, SensorEval, AsBuiltRail, DrawingRef, Verified, Comment`
 
 - `Kind` enum: `IM`, `F-DI`, `F-DQ`, `F-RQ`, `DI`, `DQ`.
 - `(Zone, Slot)` unique. `ModuleName` unique within a zone.
 - `InputBytes` - process-image width (F-DI 8ch HF = 7). Used to sanity-check addresses;
   only **byte 0** of an F-DI range carries the 8 safe channel values.
+- `F_DestAddr` - PROFIsafe destination address (F-destination). **Must be unique across
+  the network** and is a reviewable safety parameter, so it is declared, not auto-assigned.
+- `F_MonitorTime` - PROFIsafe monitoring time.
+- `SensorEval` enum `1oo1`/`1oo2` - required on `F-DI`, rejected on non-F modules. Openness
+  **cannot** set the F-DI sensor evaluation, so this column states the intended value: it
+  drives the manual TIA step and lets a report check what was actually configured. With
+  1oo2 evaluated in software (`EV1oo2DI`) this is normally `1oo1`.
 
 **`22_Devices`** - one row per physical device.
 
@@ -118,18 +125,25 @@ Unknown keys are a warning, not an error, so the sheet can carry project notes.
 
 **`23_Channels`** - one row per physical channel. **The heart of the schema.**
 
-`ChannelID, DeviceID, Component, Signal, Paired, Polarity, AsBuiltSlot, AsBuiltChannel, AsBuiltTerminal, AsBuiltTagName, DesignSlot, DesignChannel, ModuleName, DrawingRef, Description, Verified`
+`ChannelID, DeviceID, Component, Signal, Paired, Polarity, Slot, Channel, Terminal, LegacyTagName, ModuleName, DrawingRef, Description, Verified`
 
 - `Signal` enum: `ChA`, `ChB`, `Diag`.
 - `Paired` (`Yes`/`No`) - `No` means genuinely single-channel (1oo1). Never inferred.
-- `Polarity` enum: `NC` (1 = OK, de-energize to trip - the default) or `NO` (1 = demand,
-  inverted with a negated contact in the IOMap). **A wiring-drawing fact; never guessed.**
-- **As-built vs Design columns are both required.** `AsBuilt*` records how the plant is
-  wired today; `Design*` records the target assignment. When they differ (e.g. re-mapping
-  both chains of a device onto one F-DI module for in-module 1oo2) that is a **wiring
-  change requiring safety review** - it must be visible data, not a side effect of row
-  order in a generator.
-- `(Zone, DesignSlot, DesignChannel)` must be unique - no two signals on one channel.
+- `Polarity` enum: `NC` (1 = OK, de-energize to trip) or `NO` (1 = demand, inverted with a
+  negated contact in the IOMap). **A wiring-drawing fact; never guessed and never
+  defaulted** - a blank is a named validation error, because a wrong polarity inverts a
+  trip. `10_Project.DefaultPolarity` documents the house convention; it does not fill cells.
+- `Slot`/`Channel`/`Terminal` - the as-built wiring, which is the only wiring.
+- `LegacyTagName` - the existing plant tag, carried for traceability. Generated tag names
+  come from `10_Project.TagPattern`; this column is never used as a tag.
+- `(Zone, Slot, Channel)` must be unique - no two signals on one channel.
+
+> **Removed in v1.1: `DesignSlot`/`DesignChannel`.** They expressed the in-module re-map
+> that *firmware* 1oo2 requires (ChA/ChB on channel *n* and *n+4* of one module). When 1oo2
+> is evaluated in software the as-built wiring stands, and ChA/ChB on **separate modules**
+> is the better arrangement - a single module failure cannot take both channels of a pair.
+> Keeping a second set of wiring columns after that decision would only create ambiguity
+> about which wiring is real.
 
 ### Design - software
 

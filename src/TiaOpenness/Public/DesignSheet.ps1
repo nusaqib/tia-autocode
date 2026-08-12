@@ -107,7 +107,19 @@ function Sync-TiaDesignSheet {
     $cfgPath = Join-Path $Path 'sheet.json'
     $cfg = $null
     if (Test-Path $cfgPath) { $cfg = Get-Content -Raw $cfgPath | ConvertFrom-Json }
-    elseif (-not $Workbook) { throw "No sheet.json at $cfgPath (see engine docs/DESIGN-SHEET.md)." }
+
+    # No config and no -Workbook: a single .xlsx in the design folder IS the design, so
+    # the common case needs no config file at all. Two would be ambiguous - say so.
+    if (-not $cfg -and -not $Workbook) {
+        $found = @(Get-ChildItem -Path $Path -Filter '*.xlsx' -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -notlike '~$*' })
+        if ($found.Count -eq 1) { $Workbook = $found[0].FullName }
+        elseif ($found.Count -gt 1) {
+            throw ("$Path holds $($found.Count) .xlsx files - name one with -Workbook, or add " +
+                   "sheet.json: " + (($found | ForEach-Object { $_.Name }) -join ', '))
+        }
+        else { throw "No design workbook (.xlsx) and no sheet.json in $Path (see engine docs/DESIGN-SHEET.md)." }
+    }
 
     $transport = if ($Workbook) { 'workbook' }
                  elseif ($cfg.transport) { $cfg.transport }
