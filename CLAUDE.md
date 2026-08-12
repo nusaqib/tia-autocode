@@ -8,9 +8,14 @@ that consume it as a git submodule. See `docs/ROADMAP.md`, `docs/SPECIFICATION.m
 ## What this is
 
 A Windows PowerShell 5.1 module (`src/TiaOpenness`) that connects to TIA Portal and
-programs it: hardware/devices, tags, UDTs, data blocks, OB/FB/FC logic, HMI - plus a
-declarative generator (`Invoke-TiaBuildFromSpec`) that builds a whole project from a
-YAML manifest + CSV spreadsheets + SCL files.
+programs it: hardware/devices, tags, UDTs, data blocks, OB/FB/FC logic, HMI - plus two
+declarative generators:
+
+- `Invoke-TiaBuildFromSpec` - a whole project from a YAML manifest + CSVs + SCL.
+- `Invoke-TiaSheetPipeline` - a whole **safety** project from a design workbook, in eight
+  gated phases (Project, Hardware, UDTs, DB, Tags, IOMap, Certified, Interlocks). The
+  schema contract is `docs/DESIGN-SHEET.md` (currently **v1.6**); `Test-TiaDesignSheet`
+  validates it offline, with no TIA and no network. This is the path SR_PPS uses.
 
 ## Hard constraints (do not violate)
 
@@ -26,7 +31,20 @@ YAML manifest + CSV spreadsheets + SCL files.
 - **Safety (F) blocks**: never bypass safety access protection. Openness throws
   "permission to modify the safety program is missing" until the user unlocks it in TIA.
 - **Never modify a human's live production project** without explicit consent; write to a
-  scratch project or your own `-New` instance.
+  scratch project or your own `-New` instance. `Connect-TiaPortal` with no `-New` ATTACHES
+  to whatever GUI session is open - use `-New` for anything that writes or compiles.
+- **F-compliant data types are `Bool`, `Int`, `DInt`, `Word`, `Time`** (or a nested UDT
+  that is itself F-compliant). Anything else is rejected when the F-DB compiles - phases
+  after the mistake was made, with an error naming the type, not the source. Validator
+  rule 16 catches it offline. **`Byte` is not F-compliant**, which is why the certified
+  `DIAG` output (a `BYTE` on ESTOP1/SFDOOR/EV1oo2DI) cannot be stored in an F-DB at all;
+  declaring the member `Bool` instead is worse - the UDT compiles, then every certified
+  network fails the connection type check.
+- **Fail-safe convention**: at the PLC input `1 = OK`, `0 = fault`. Signal sense, channel
+  pairing and interlock membership come from drawings - never from a heuristic, a name
+  pattern, or list position.
+- **Never wire a safety input to a member nothing writes.** It reads as connected and
+  behaves as a constant - worse than an open pin, which at least looks unfinished.
 
 ## Environment (this machine)
 
@@ -40,10 +58,11 @@ YAML manifest + CSV spreadsheets + SCL files.
 ## Build / test
 
 ```powershell
-Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 55 cmdlets
+Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 61 cmdlets
 .\tests\Test-Module.ps1                                   # offline self-test (no TIA)
 .\scripts\Validate-Full.ps1                               # live attach + scratch write path
 Test-TiaSpec -Path .\examples\example-project\project.yaml
+Test-TiaDesignSheet -Path <repo>\design\csv                # sheet schema + safety rules
 ```
 CI (`.github/workflows/ci.yml`, windows-latest) runs the offline self-test on every push.
 When CI fails and logs are admin-gated, read `::error::` annotations at
@@ -57,7 +76,29 @@ When CI fails and logs are admin-gated, read `::error::` annotations at
 - Cmdlets are verb-noun; `-Plc`/`-Hmi` accept a wrapper, raw software object, name, or
   nothing (first). Use `Get-Safe { }` for optional Openness props inside hashtables.
 - SCL-first authoring (portable, diffable); SimaticML XML for graphical/exact blocks.
-- Always `Invoke-TiaCompile` and check `.Errors` before claiming success.
+  Two things are **XML-only and cannot be set from SCL**: a UDT's `IsFailsafeCompliant`
+  and a GlobalDB's `ProgrammingLanguage=F_DB`. Both fail silently at creation and loudly
+  two phases later.
+- Always `Invoke-TiaCompile` and check `.Errors` before claiming success. `Invoke-TiaCompile`
+  returns `.Messages` already flattened to strings; the nested message tree is `.Result.Messages`.
+
+## Design-sheet pipeline
+
+`design/<workbook>.xlsx` (authoring surface) -> `Sync-TiaDesignSheet` -> `design/csv/`
+(committed snapshot, the actual build input) -> `Test-TiaDesignSheet` (offline gate) ->
+`Invoke-TiaSheetPipeline` -> TIA. The CSV snapshot is what `git diff` reviews, so it is
+the safety change record; the workbook is a binary blob and diffs to nothing. A phase
+refuses to run on a stale snapshot, and `-Force` does not override that.
+
+Three things Openness cannot do here, all discovered live - do not re-spike:
+
+- **F-DI sensor evaluation (1oo1/1oo2) is not exposed.** 37 `Failsafe_*` attributes, none
+  of them evaluation. Hence 1oo1 in hardware and 1oo2 in software via `EV1oo2DI`.
+- **F-destination addresses are never auto-assigned through Openness.** Every F-module
+  keeps the catalogue default (65534) and the compiler does not object - they collide
+  silently. They must be declared in the sheet to match the BaseUnit DIP switches.
+- **An IO device inherits `SubnetMask` from its IO controller** (`set_SubnetMask is not
+  supported`). Report it as inherited, not as a failure.
 
 ## Skills (in `.claude/skills/`)
 

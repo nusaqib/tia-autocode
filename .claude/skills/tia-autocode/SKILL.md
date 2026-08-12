@@ -1,6 +1,6 @@
 ---
 name: tia-autocode
-description: Generate a complete TIA Portal program from a declarative spec - a YAML manifest plus CSV spreadsheets (tags, UDTs, DBs, modules) and SCL logic files, built and compiled by Invoke-TiaBuildFromSpec. Use for spreadsheet-driven / spec-driven project generation, the manifest/project.yaml, Test-TiaSpec validation, or setting up a private project repo that consumes the engine. Orchestrates the tia-hardware, tia-data, and tia-programming skills.
+description: Generate a complete TIA Portal program from declarative data - either a YAML manifest plus CSVs and SCL (Invoke-TiaBuildFromSpec) or a design workbook driving an eight-phase safety build (Sync-/Test-TiaDesignSheet, Invoke-TiaSheetPipeline). Use for spreadsheet-driven / spec-driven / sheet-driven project generation, project.yaml, the design-sheet schema and its validation, or setting up a private project repo that consumes the engine. Orchestrates the tia-hardware, tia-data, and tia-programming skills.
 ---
 
 # tia-autocode: spec-driven project generation
@@ -76,6 +76,46 @@ project repo's CI.
   `{ template: MotorStarter, params: { Name: FB_Conveyor } }` (optionally `templateDir`
   for a project-local library). `Test-TiaSpec` expands templates to resolve InstanceOfFB
   / TypedOfUDT references.
+
+## Sheet-driven safety builds (Phase 7) - the other generator
+
+For a **safety** system the manifest path is the wrong shape: every safety-relevant fact
+must be an explicit, reviewable cell with a drawing reference, not something inferred from
+a description or from list position. `Invoke-TiaSheetPipeline` builds a whole F-project
+from a design workbook. Schema contract: **`docs/DESIGN-SHEET.md` (v1.6)**.
+
+```
+design/<book>.xlsx --Sync-TiaDesignSheet--> design/csv/  [COMMITTED - the build input]
+                   --Test-TiaDesignSheet--> pass/fail    (offline: no TIA, no network)
+                   --Invoke-TiaSheetPipeline--> TIA
+```
+
+```powershell
+Sync-TiaDesignSheet -Path .\design [-DiffOnly]
+Test-TiaDesignSheet -Path .\design\csv [-RequireVerified]
+Invoke-TiaSheetPipeline -Path .\design\csv -Clean -Save     # 8 phases
+Invoke-TiaSheetPipeline -Path .\design\csv -From DB         # resume
+Export-TiaDesignWorkbook -Path .\design\csv -Out .\design\book.xlsx -Force
+```
+
+Phases: **Project, Hardware, UDTs, DB, Tags, IOMap, Certified, Interlocks.** Each gates on
+its own input tabs and the pipeline stops at the first failure. A **stale snapshot is a
+hard error and `-Force` does not override it** - the build reads the CSV, so an unsynced
+workbook edit would otherwise build the old design while the approved workbook says
+otherwise, and `git diff` would show nothing.
+
+Traps worth knowing before you touch a design (all cost a live build to discover):
+
+- **F-compliant types are `Bool`, `Int`, `DInt`, `Word`, `Time`** or a nested F-compliant
+  UDT. `Byte` is not one - so the certified `DIAG` output (a `BYTE`) cannot live in an
+  F-DB at all, and declaring it `Bool` fails every certified network on the type check.
+  Leave the pin `OpenCon`.
+- **Never wire a pin to a member nothing writes.** It reads as connected and behaves as a
+  constant. Outputs are wired only when the resolved UDT declares the landing member.
+- `IsFailsafeCompliant` and `ProgrammingLanguage=F_DB` are **XML-only**, never SCL.
+- Openness does not expose F-DI sensor evaluation, never auto-assigns F-destination
+  addresses (all default to 65534 and the compiler stays silent), and cannot set
+  `SubnetMask` on an IO device (it is inherited from the controller).
 
 ## Delegates to the area skills
 

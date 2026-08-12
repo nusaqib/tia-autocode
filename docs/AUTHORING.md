@@ -5,6 +5,12 @@ compiled TIA Portal project. This guide is the reference for **every file and fi
 what to put where. (Reverse of this: `Export-TiaToSpec` generates these files from an
 existing project.)
 
+> **Building a safety system?** This manifest path is the wrong authoring surface for one.
+> Use the **design-sheet pipeline** instead - a workbook where every safety-relevant fact
+> is an explicit cell with a drawing reference, validated offline before anything is
+> generated. Its contract is [DESIGN-SHEET.md](DESIGN-SHEET.md) and its usage is section
+> 11.5 of [GUIDE.md](GUIDE.md).
+
 ## Project layout
 
 ```

@@ -202,8 +202,15 @@ existing machine (e.g. `PPS_SR_`) into the spec model and diff future changes.
 | **5** | Private project-repo template + `New-TiaProjectRepo` scaffolder (submodule wiring, `build.ps1`/`validate.ps1`, offline-validation CI, starter data/logic) + docs | No | done (scaffold + generated-spec validation self-tested) |
 | **6** | Safety/LAD generation + distributed ET200SP: emit LAD & F-LAD (FlgNet SimaticML), build ET200SP PROFINET stations with F-modules, PROFINET IO-system assignment, software 1oo2 | Yes | **proven at scale via SR PPS** ([SAFETY-LAD-SPIKE.md](SAFETY-LAD-SPIKE.md)): a whole system = 1 F-CPU + **16 ET200SP stations (76 modules) + 16 F-LAD safety FBs** built in one project, **compiles 0/0**. Openness boundaries documented (firmware 1oo2 not settable -> software 1oo2; F-block interfaces reject UDTs; safety-runtime call = TIA safety-editor step). Not yet folded into engine cmdlets - lives as the SR PPS project scripts. |
 
+| **7** | **Sheet-driven safety builds**: a design workbook is the single source of truth; `Sync-TiaDesignSheet` -> committed CSV snapshot -> `Test-TiaDesignSheet` (offline gate) -> `Invoke-TiaSheetPipeline` (8 gated phases) -> TIA. Schema contract [DESIGN-SHEET.md](DESIGN-SHEET.md), currently **v1.6** | Mixed | **done, proven live on SR_PPS**: 16 stations / 76 modules / 92 devices / 184 channels -> 21 UDTs, one formal F-DB, 184 tags at live addresses, and three system F-FBs (IOMap, Certified with 149 certified ESTOP1/SFDOOR/EV1oo2DI calls, Interlocks) - **compiles 0 errors**. Replaces the per-project scripts Phase 6 left behind. |
+
 Phase 0 is fully offline and testable — it lands first and locks the contracts
 everything else builds on.
+
+Phase 7 exists because Phase 6's input side was the weak link: device type, identity and
+A/B pairing were *inferred* from free-text descriptions, and for a personnel protection
+system that is the wrong architecture. Every safety-relevant fact is now an explicit,
+reviewable cell with a drawing reference, and the generators are mechanical translation.
 
 ---
 
@@ -218,6 +225,17 @@ everything else builds on.
 ## 8. Security & privacy
 
 - Customer data lives **only** in private project repos — never in the public engine.
-- Google Sheets are exported manually into the private repo; the engine needs no Google
-  credentials or network access.
+- **Transport decision, revised in Phase 7.** The original rule was "Google Sheets exported
+  manually; the engine needs no credentials or network". `Sync-TiaDesignSheet` now also
+  supports networked transports (`xlsx-export`, `published-csv`, `api-key`) — but the
+  safety-critical property is preserved by making the fetch a *sync step*, never a build
+  dependency: the build reads the **committed CSV snapshot**, so it is reproducible from a
+  git checkout alone, `git diff` on `design/csv/` is the change record for every safety
+  edit, and the F-signature policy has an immutable record of what was built. A live cloud
+  read would give none of that.
+- Any API key or service-account file lives in the **private project repo** only
+  (`design/*.key.json`, gitignored) — never in this engine.
+- Note for `published-csv`: publish-to-web makes a sheet readable by anyone with the URL.
+  For a national-lab PPS that may be a policy problem — prefer the local `workbook`
+  transport, which is what SR_PPS uses.
 - `generated/` snapshots can contain customer logic — private repos only.

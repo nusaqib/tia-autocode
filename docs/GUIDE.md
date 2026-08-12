@@ -337,6 +337,43 @@ Invoke-TiaDownload -Plc $plc             # confirm; requires an online connectio
 
 ---
 
+## 11.5 Sheet-driven safety builds (Phase 7)
+
+For a safety system, a manifest is the wrong authoring surface: every safety-relevant fact
+needs to be an explicit, reviewable cell with a drawing reference. The design-sheet
+pipeline makes a workbook the single source of truth and reduces the generators to
+mechanical translation.
+
+```
+design/<book>.xlsx  --Sync-TiaDesignSheet-->  design/csv/  (COMMITTED - the build input)
+                    --Test-TiaDesignSheet-->  pass/fail    (offline: no TIA, no network)
+                    --Invoke-TiaSheetPipeline-->  TIA
+```
+
+```powershell
+Sync-TiaDesignSheet  -Path .\design                    # workbook -> csv snapshot
+Sync-TiaDesignSheet  -Path .\design -DiffOnly          # preview, write nothing
+Test-TiaDesignSheet  -Path .\design\csv                # the gate; non-zero exit for CI
+Test-TiaDesignSheet  -Path .\design\csv -RequireVerified   # unverified rows become errors
+Invoke-TiaSheetPipeline -Path .\design\csv -Clean -Save     # all eight phases
+Invoke-TiaSheetPipeline -Path .\design\csv -From DB         # resume after a fix
+Export-TiaDesignWorkbook -Path .\design\csv -Out .\design\book.xlsx -Force   # inverse of Sync
+```
+
+The eight phases are **Project, Hardware, UDTs, DB, Tags, IOMap, Certified, Interlocks**,
+each with defined input tabs, a defined output and its own gate. The pipeline stops at the
+first failure - the phases are a chain, so continuing would build safety logic on a
+known-bad foundation.
+
+Why the CSV snapshot is committed rather than fetched at build time: an `.xlsx` is a binary
+blob, so `git diff` on it says nothing, and for a safety design the per-cell change record
+*is* the review evidence. It also keeps the build reproducible from a checkout alone.
+
+The schema contract - every tab, column, enum, and validation rule - is
+[DESIGN-SHEET.md](DESIGN-SHEET.md).
+
+---
+
 ## 12. Troubleshooting
 
 | Symptom | Cause / fix |
@@ -346,7 +383,14 @@ Invoke-TiaDownload -Plc $plc             # confirm; requires an online connectio
 | `new TiaPortal` → "Security error. The operation has timed out." | First-use whitelist dialog can't be shown (e.g. under `runas`); use a real interactive desktop session. |
 | Can't load Openness / weird type errors | You're on PowerShell 7. Use Windows PowerShell 5.1. |
 | `New-TiaDevice` rejects the order number | MLFB not in your catalog; export an existing device or use a template project. |
-| Block import compiles with errors | Check `Invoke-TiaCompile` `.Messages`; SCL interface/name issues are the usual cause. |
+| Block import compiles with errors | Check `Invoke-TiaCompile` `.Messages`; SCL interface/name issues are the usual cause. (`.Messages` is already flattened to strings; the nested tree is `.Result.Messages`.) |
+| `The type <X> is not permitted in the fail-safe block interface` | The UDT was created from SCL. `IsFailsafeCompliant` is **XML-only** - an SCL-made UDT compiles fine and then fails every F-DB member using it. Same for `ProgrammingLanguage=F_DB` on a GlobalDB. |
+| An F-UDT compiles but every certified network fails | A pin/member type mismatch. `DIAG` is a `BYTE`, so it fits no F-compliant member at all - leave it `OpenCon`. See DESIGN-SHEET.md. |
+| F-DB rejects a member | `Byte`, `Real`, `String`, ... are not F-compliant. Only `Bool`, `Int`, `DInt`, `Word`, `Time` and nested F-compliant UDTs. |
+| `STALE SNAPSHOT: ... has unsynced changes` | The workbook and `design/csv` disagree - run `Sync-TiaDesignSheet`. The build reads the CSV, not the workbook, and `-Force` does not override this gate. |
+| `... cannot be accessed. It has already been opened by user ...` | A TIA GUI window holds the project, or a headless run just exited - a project stays locked for ~2 minutes afterwards. |
+| `'set_SubnetMask' is not supported by type ... Node` | Expected: an IO **device** inherits its mask from the IO controller. Set it on the controller. |
+| Every F-module sits at F-destination address 65534 | Expected: TIA only auto-assigns F-destination addresses through the GUI. Declare them in the design (they must match the BaseUnit DIP switches) - the compiler will **not** flag the collision. |
 
 Run the offline self-test any time to confirm the module itself is healthy:
 

@@ -107,6 +107,8 @@ src/TiaOpenness/
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Authoring (Phase 4)** | XLSX workbook import; naming-convention lint; reusable SCL/UDT templates | `Import-TiaXlsx`, `Test-TiaNaming`, `Get-/Expand-TiaTemplate` | ✅ offline-tested; xlsx-build + template-build validated live (compile 0 errors) |
 | **Project repo (Phase 5)** | Scaffold a private machine repo (submodule wiring, build/validate scripts, offline CI) | `New-TiaProjectRepo` | ✅ scaffold + generated-spec validation self-tested |
+| **Design sheet (Phase 7)** | Workbook -> committed CSV snapshot; offline schema + safety-rule validation; pack CSVs back into an authoring workbook with enum dropdowns | `Sync-TiaDesignSheet`, `Test-TiaDesignSheet`, `Export-TiaDesignWorkbook` | ✅ validated (schema **v1.6**, contract in [DESIGN-SHEET.md](DESIGN-SHEET.md)) |
+| **Safety pipeline (Phase 7)** | Build a whole F-project from the sheet in 8 gated phases; clean an output tree | `Invoke-TiaSheetPipeline`, `Invoke-TiaBuildFromSheet`, `Clear-TiaSheetBuild` | ✅ validated live on SR_PPS (16 stations, 149 certified calls, compiles 0 errors) |
 | **Quality** | Offline structural self-test; CI on windows-latest | `tests/Test-Module.ps1` | ✅ passing |
 
 Legend: ✅ validated end-to-end against the live V19 session (2026-07-21) ·

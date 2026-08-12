@@ -148,7 +148,8 @@ policy**; writes go to a scratch project.
 ## Documentation
 
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — the plan and its status (Phases 0-5, all done): spec-driven project + HMI automation (spreadsheet → CSV/XLSX → generate).
-- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 55-cmdlet reference.
+- **[docs/SPECIFICATION.md](docs/SPECIFICATION.md)** — full feature spec, architecture, and 61-cmdlet reference.
+- **[docs/DESIGN-SHEET.md](docs/DESIGN-SHEET.md)** — the design-workbook schema contract (**v1.6**): tabs, columns, enums, the eight build phases, and every validation rule `Test-TiaDesignSheet` enforces. This is the input side of the safety pipeline.
 - **[docs/GUIDE.md](docs/GUIDE.md)** — task-oriented usage guide (connect → tags → logic → compile → download → generate → authoring helpers).
 - **[docs/AUTHORING.md](docs/AUTHORING.md)** — what to specify for a project and in which file (every manifest field + CSV column), plus how to create a new project from the template.
 - **[docs/PROJECT-REPO-GUIDE.md](docs/PROJECT-REPO-GUIDE.md)** — the two-repo strategy and how a private project repo (e.g. `PPS_SR`) links this engine as a submodule.
