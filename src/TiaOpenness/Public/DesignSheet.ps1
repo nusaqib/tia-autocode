@@ -9,6 +9,7 @@ $script:TiaSheetSchemaVersion = '1.0'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 $script:TiaSheetSchema = [ordered]@{
+    '10_Project'     = @('Key','Value','Notes')
     '20_Zones'       = @('Zone','Name','Description','Station','StationLabel','IM_MLFB','IM_FW','IOSystem','Verified','Notes')
     '21_Modules'     = @('Zone','Slot','Kind','MLFB','FW','ModuleName','InputBytes','AsBuiltRail','DrawingRef','Verified','Comment')
     '22_Devices'     = @('DeviceID','Zone','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
@@ -182,6 +183,21 @@ function Test-TiaDesignSheet {
             if ([string]::IsNullOrWhiteSpace($v)) { $errors.Add("${t} row ${n}: '$c' is blank (enum)"); continue }
             if ($allowed -cnotcontains $v) { $errors.Add("${t} row ${n}: '$c'='$v' not in {$($allowed -join ', ')}") }
         }
+    }
+
+    # project keys - these drive project creation, so missing ones are hard errors
+    $proj = @{}
+    foreach ($r in $tabs['10_Project']) { if ($r.Key) { $proj[$r.Key] = [string]$r.Value } }
+    foreach ($k in @('ProjectName','PlcName','CpuMLFB','CpuFW','SubnetName','IoSystemName',
+                     'SafetyRuntimeFB','TagTableIn','TagPattern','DbPattern','BlockPattern',
+                     'InstancePattern','BlockNumberBase','BlockNumberStep','DefaultPolarity')) {
+        if (-not $proj.ContainsKey($k) -or -not $proj[$k]) { $errors.Add("10_Project: missing key '$k'") }
+    }
+    if ($proj['SchemaVersion'] -and ([version]$proj['SchemaVersion'] -gt [version]$script:TiaSheetSchemaVersion)) {
+        $errors.Add("10_Project: SchemaVersion $($proj['SchemaVersion']) is newer than this engine supports ($script:TiaSheetSchemaVersion)")
+    }
+    if ($proj['DefaultPolarity'] -and @('NC','NO') -cnotcontains $proj['DefaultPolarity']) {
+        $errors.Add("10_Project: DefaultPolarity '$($proj['DefaultPolarity'])' must be NC or NO")
     }
 
     $zones   = @{}; foreach ($r in $tabs['20_Zones'])  { $zones[$r.Zone] = $r }

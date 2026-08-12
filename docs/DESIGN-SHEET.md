@@ -1,17 +1,30 @@
 # Design-sheet schema contract (v1)
 
-The **design sheet** is a project's single source of truth for everything a generator
-needs: hardware, devices, wiring, data model, and safety-block configuration. It is
-authored in Google Sheets (or any spreadsheet), synced into the project repo as a
-**committed CSV snapshot**, and validated offline before any build.
+The **design sheet IS the project generator's input.** It fully determines the TIA
+project - project and CPU, network, modules, data model, tags, and safety logic - with no
+per-project code and no hidden constants. A new project is a new sheet, not new scripts.
 
 ```
-Google Sheet  --Sync-TiaDesignSheet-->  design/csv/*.csv  (COMMITTED = the build input)
-                                              |
-                                     Test-TiaDesignSheet  (offline, CI)
-                                              |
-                                        generators -> TIA
+Google Sheet --Sync-TiaDesignSheet--> design/csv/*.csv  (COMMITTED = the build input)
+                                             |
+                                    Test-TiaDesignSheet (offline, CI)
+                                             |
+                                    Invoke-TiaBuildFromSheet
+                                             |
+                                    complete TIA project
 ```
+
+| Tab | Produces |
+|---|---|
+| `10_Project` | the project, the CPU, safety settings, naming + numbering rules |
+| `20_Zones` | PROFINET stations and the IO system |
+| `21_Modules` | plugged modules (CPU-local and remote) |
+| `22_Devices` | typed members of each zone F-DB |
+| `23_Channels` | PLC tags at live addresses + the IOMap rungs (incl. polarity inversion) |
+| `30_UDTs` | the UDT library |
+| `32_Blocks` | block inventory, languages, numbers |
+| `33_SafetyBlocks` | certified ESTOP1 / SFDOOR / EV1oo2DI networks |
+| `34_Interlocks` | zone interlock logic and the safety-runtime wiring |
 
 **Why a committed snapshot and not a live read:** a build must be reproducible from a git
 checkout alone; `git diff design/csv/` is the change record for every safety edit; and a
@@ -47,6 +60,31 @@ Numbering leaves gaps so lifecycle tabs (`10_Requirements`, `11_SafetyFunctions`
 | `02_Decisions` | `DecID, Topic, Question, Decision, Rationale, Status, Owner, Date` |
 
 `02_Decisions.Status` enum: `Open`, `Decided`, `Superseded`.
+
+### Project definition
+
+**`10_Project`** - key/value, the parameters needed to create the project from nothing.
+
+`Key, Value, Notes`
+
+| Key | Meaning |
+|---|---|
+| `SchemaVersion` | must match the engine's supported version |
+| `ProjectName` / `ProjectPath` | TIA project name and output folder (relative to repo) |
+| `PlcName` / `CpuMLFB` / `CpuFW` | CPU device name, order number, firmware (`V2.9`) |
+| `CpuLocalZone` | zone whose modules plug on the CPU's own rack (blank = all remote) |
+| `SubnetName` / `IoSystemName` | PROFINET subnet and IO-system names |
+| `SafetyRuntimeFB` | safety main FB the zone FBs are called from (`Main_Safety_RTG1`) |
+| `TagTableIn` / `TagTableOut` | tag-table names for F inputs / outputs |
+| `TagPattern` | tag-name grammar, e.g. `PPS_{Zone}_{DeviceRef}_{Component}_{Signal}` |
+| `DbPattern` / `BlockPattern` | `DB_{Zone}` / `FB_{Zone}_{Layer}` |
+| `InstancePattern` | certified-instruction instance name, e.g. `Inst_{DeviceRef}_{Component}_{Instruction}` |
+| `BlockNumberBase` / `BlockNumberStep` | per-zone block numbering (zone *i* -> base + i*step) |
+| `DefaultPolarity` | `NC` |
+| `RequireVerified` | `Yes`/`No` - refuse to generate safety logic from unverified rows |
+
+Placeholders in patterns: `{Zone} {DeviceRef} {Component} {Signal} {Layer} {Instruction}`.
+Unknown keys are a warning, not an error, so the sheet can carry project notes.
 
 ### Design - plant and hardware
 
