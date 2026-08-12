@@ -23,7 +23,7 @@
         'Invoke-TiaBuildFromSpec','Export-TiaToSpec','Import-TiaXlsx',
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',
         'Test-TiaSpec','Test-TiaNaming',
-        'Sync-TiaDesignSheet','Test-TiaDesignSheet',
+        'Sync-TiaDesignSheet','Test-TiaDesignSheet','Export-TiaDesignWorkbook',
         'Get-TiaTemplate','Expand-TiaTemplate',
         'New-TiaProjectRepo'
     )

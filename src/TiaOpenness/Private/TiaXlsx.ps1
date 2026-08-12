@@ -174,3 +174,19 @@ function Read-TiaRows {
     if ($path -match '\.xlsx$') { @(Import-TiaXlsx -Path $path -Sheet $split.Sheet) }
     else { @(Import-Csv $path) }
 }
+
+function ConvertTo-TiaXlsxColumn {
+    <#
+    .SYNOPSIS
+        0-based column index -> A, B, ... Z, AA, AB ... (OOXML cell references).
+    #>
+    param([Parameter(Mandatory)][int]$Index)
+    $s = ''
+    $n = $Index + 1
+    while ($n -gt 0) {
+        $r = ($n - 1) % 26
+        $s = [char](65 + $r) + $s
+        $n = [int](($n - 1) / 26)
+    }
+    $s
+}

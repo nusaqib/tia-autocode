@@ -5,16 +5,33 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.0'
+$script:TiaSheetSchemaVersion = '1.1'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
+#
+# v1.1 changes (see docs/DESIGN-SHEET.md "Schema history"):
+#   - 23_Channels: DesignSlot/DesignChannel REMOVED. They existed only to express the
+#     in-module re-map that FIRMWARE 1oo2 requires (ChA/ChB on channel n and n+4 of one
+#     module). Project decision D01 evaluates 1oo2 in SOFTWARE (EV1oo2DI), so the as-built
+#     wiring is the only wiring - and ChA/ChB on separate modules is the safer arrangement.
+#     AsBuilt* prefixes dropped with them: there is now one wiring truth, so Slot/Channel
+#     need no qualifier.
+#   - 21_Modules: F-parameters added. F_DestAddr (PROFIsafe destination address) must be
+#     unique per network and is a reviewable safety parameter; Openness cannot set the
+#     F-DI sensor evaluation, so SensorEval records the INTENDED value for the manual TIA
+#     step and lets a report check it.
+#   - 31_Policy added: DeviceType+Component -> certified instruction chain, declared ONCE.
+#     Previously every device carried its own 33_SafetyBlocks row (131 rows mechanically
+#     derived from DeviceType) - 131 chances to drift from a 10-line rule.
+#   - 33_SafetyBlocks is now an OVERRIDE tab: only rows that deviate from 31_Policy.
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Zones'       = @('Zone','Name','Description','Station','StationLabel','IM_MLFB','IM_FW','IOSystem','Verified','Notes')
-    '21_Modules'     = @('Zone','Slot','Kind','MLFB','FW','ModuleName','InputBytes','AsBuiltRail','DrawingRef','Verified','Comment')
+    '21_Modules'     = @('Zone','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
     '22_Devices'     = @('DeviceID','Zone','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
-    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Polarity','AsBuiltSlot','AsBuiltChannel','AsBuiltTerminal','AsBuiltTagName','DesignSlot','DesignChannel','ModuleName','DrawingRef','Description','Verified')
+    '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Polarity','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
     '30_UDTs'        = @('UDT','Order','Member','Datatype','Comment','FailsafeCompliant')
+    '31_Policy'      = @('PolicyID','DeviceType','Component','UDT','Order','Instruction','Version','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Rationale','Verified')
     '32_Blocks'      = @('Block','Zone','Layer','Language','Number','Description')
     '33_SafetyBlocks'= @('RowID','DeviceID','Component','Instruction','Version','InstanceName','DISCTIME','TIME_DEL','ACK_NEC','OPEN_NEC','AckSource','QTarget','Verified','Notes')
     '34_Interlocks'  = @('Zone','Target','DeviceID','Member','Include','Rationale','SF_ID')
@@ -22,17 +39,19 @@ $script:TiaSheetSchema = [ordered]@{
 # closed enum sets: "Tab.Column" -> allowed values
 $script:TiaSheetEnums = @{
     '21_Modules.Kind'            = @('IM','F-DI','F-DQ','F-RQ','DI','DQ')
+    '21_Modules.SensorEval'      = @('1oo1','1oo2')
     '23_Channels.Signal'         = @('ChA','ChB','Diag')
     '23_Channels.Paired'         = @('Yes','No')
     '23_Channels.Polarity'       = @('NC','NO')
     '22_Devices.InInterlock'     = @('Yes','No')
+    '31_Policy.Instruction'      = @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
     '32_Blocks.Layer'            = @('IOMap','Safety','Certified','Runtime','Data')
     '32_Blocks.Language'         = @('F_LAD','F_DB','F_FBD','LAD','SCL')
     '33_SafetyBlocks.Instruction'= @('ESTOP1','SFDOOR','EV1oo2DI','FDBACK','ACK_GL')
     '34_Interlocks.Target'       = @('Interlocks_OK','Zone_Safe')
     '34_Interlocks.Include'      = @('Yes','No')
 }
-$script:TiaSheetVerifiedCols = @('20_Zones','21_Modules','22_Devices','23_Channels','33_SafetyBlocks')
+$script:TiaSheetVerifiedCols = @('20_Zones','21_Modules','22_Devices','23_Channels','31_Policy','33_SafetyBlocks')
 
 # Headers for every known tab, including the optional/governance ones. Used to preserve a
 # tab's header when it legitimately has zero data rows (the xlsx reader consumes row 1 as
@@ -47,16 +66,28 @@ foreach ($k in $script:TiaSheetSchema.Keys) { $script:TiaSheetKnownHeaders[$k] =
 function Sync-TiaDesignSheet {
     <#
     .SYNOPSIS
-        Fetch a Google Sheet's tabs into a committed CSV snapshot (design/csv).
+        Expand a design workbook's tabs into a committed CSV snapshot (design/csv).
     .DESCRIPTION
-        Reads design/sheet.json (sheetId, transport, tabs: name -> gid) and writes one
-        deterministic CSV per tab plus .sheet-sync.json (timestamp, per-tab rows + sha256).
-        Fails loudly when a response is HTML (an unpublished or permission-denied sheet
-        returns a login page, which would otherwise land on disk as a "valid" CSV).
+        The workbook is the authoring surface; the CSV snapshot is the build input. They
+        are kept separate on purpose: an .xlsx is a binary blob, so 'git diff' on it says
+        nothing, and for a safety design the per-cell change record IS the review evidence.
+
+        Transports (design/sheet.json "transport"):
+          workbook      local .xlsx in the project repo - no network, no credentials.
+          xlsx-export   Google Sheets whole-workbook export (plain link-sharing is enough).
+          published-csv per-tab gid CSV export (needs File > Share > Publish to web).
+          api-key       Google Sheets API with a key kept in the PRIVATE project repo.
+
+        Writes one deterministic CSV per tab plus .sheet-sync.json (per-tab rows + sha256).
+        Network transports fail loudly when a response is HTML - an unpublished or
+        permission-denied sheet returns a login page, which would otherwise land on disk
+        as a perfectly "valid" CSV.
     .PARAMETER Path
         Project design folder holding sheet.json (default: .\design).
+    .PARAMETER Workbook
+        Local .xlsx to read, overriding sheet.json. Implies transport 'workbook'.
     .PARAMETER DiffOnly
-        Fetch and report what would change; write nothing.
+        Report what would change; write nothing.
     .PARAMETER ApiKey
         Google API key (transport 'api-key'). Keep it in the PRIVATE project repo.
     .EXAMPLE
@@ -66,6 +97,7 @@ function Sync-TiaDesignSheet {
     [CmdletBinding()]
     param(
         [string]$Path = '.\design',
+        [string]$Workbook,
         [switch]$DiffOnly,
         [string]$ApiKey
     )
@@ -73,13 +105,17 @@ function Sync-TiaDesignSheet {
     # change - resolve to an absolute path up front or writes land in the wrong root.
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     $cfgPath = Join-Path $Path 'sheet.json'
-    if (-not (Test-Path $cfgPath)) { throw "No sheet.json at $cfgPath (see engine docs/DESIGN-SHEET.md)." }
-    $cfg = Get-Content -Raw $cfgPath | ConvertFrom-Json
-    if (-not $cfg.sheetId) { throw "sheet.json has no sheetId." }
-    if ($cfg.schemaVersion -and ([version]$cfg.schemaVersion -gt [version]$script:TiaSheetSchemaVersion)) {
+    $cfg = $null
+    if (Test-Path $cfgPath) { $cfg = Get-Content -Raw $cfgPath | ConvertFrom-Json }
+    elseif (-not $Workbook) { throw "No sheet.json at $cfgPath (see engine docs/DESIGN-SHEET.md)." }
+
+    $transport = if ($Workbook) { 'workbook' }
+                 elseif ($cfg.transport) { $cfg.transport }
+                 else { 'published-csv' }
+    if ($cfg -and $cfg.schemaVersion -and ([version]$cfg.schemaVersion -gt [version]$script:TiaSheetSchemaVersion)) {
         throw "Sheet schemaVersion $($cfg.schemaVersion) is newer than this engine supports ($script:TiaSheetSchemaVersion)."
     }
-    $transport = if ($cfg.transport) { $cfg.transport } else { 'published-csv' }
+    if ($transport -ne 'workbook' -and -not $cfg.sheetId) { throw "sheet.json has no sheetId." }
     $outDir = Join-Path $Path 'csv'
     if (-not $DiffOnly) { New-Item -ItemType Directory -Force $outDir | Out-Null }
 
@@ -88,10 +124,20 @@ function Sync-TiaDesignSheet {
 
     $changed = @(); $same = @(); $state = [ordered]@{}
 
-    # 'xlsx-export' fetches the WHOLE workbook once and reads tabs by name - no gids to
-    # maintain, and it works with plain link-sharing (no publish-to-web).
-    $book = $null; $bookTabs = $null
-    if ($transport -eq 'xlsx-export') {
+    # Whole-workbook transports read tabs by NAME - no gids to maintain. 'workbook' is a
+    # local file (no network at all); 'xlsx-export' pulls the same shape from Google.
+    $bookMode = @('workbook','xlsx-export') -contains $transport
+    $book = $null; $bookTabs = $null; $tempBook = $false
+    if ($transport -eq 'workbook') {
+        if (-not $Workbook) { $Workbook = [string]$cfg.workbook }
+        if (-not $Workbook) { throw "transport 'workbook' needs a 'workbook' entry in sheet.json (or -Workbook)." }
+        $book = if ([IO.Path]::IsPathRooted($Workbook)) { $Workbook } else { Join-Path $Path $Workbook }
+        if (-not (Test-Path $book)) { throw "Design workbook not found: $book" }
+        $book = (Resolve-Path $book).ProviderPath
+        $bookTabs = Get-TiaXlsxSheetName -Path $book
+    }
+    elseif ($transport -eq 'xlsx-export') {
+        $tempBook = $true
         $book = Join-Path ([IO.Path]::GetTempPath()) ("tia-sheet-" + [guid]::NewGuid().ToString('n') + ".xlsx")
         $url = "https://docs.google.com/spreadsheets/d/$($cfg.sheetId)/export?format=xlsx"
         Write-Verbose "GET $url"
@@ -104,19 +150,19 @@ function Sync-TiaDesignSheet {
                    "link. Share it (Anyone with the link -> Viewer) or use transport 'api-key'.")
         }
         $bookTabs = Get-TiaXlsxSheetName -Path $book
-        Write-Verbose ("workbook tabs: " + ($bookTabs -join ', '))
     }
+    if ($bookMode) { Write-Verbose ("workbook tabs: " + ($bookTabs -join ', ')) }
 
     # tab list: sheet.json when populated, else whatever the workbook contains
     $tabList = @()
-    if ($cfg.tabs) { $tabList = @($cfg.tabs.PSObject.Properties) }
-    if ($transport -eq 'xlsx-export' -and (-not $tabList -or -not $tabList.Count)) {
+    if ($cfg -and $cfg.tabs) { $tabList = @($cfg.tabs.PSObject.Properties) }
+    if ($bookMode -and (-not $tabList -or -not $tabList.Count)) {
         $tabList = @($bookTabs | ForEach-Object { [pscustomobject]@{ Name = $_; Value = '' } })
     }
 
     foreach ($tab in $tabList) {
         $name = $tab.Name; $gid = [string]$tab.Value
-        if ($transport -eq 'xlsx-export') {
+        if ($bookMode) {
             if ($bookTabs -notcontains $name) {
                 Write-Host ("  {0,-18} MISSING in the sheet - skipped" -f $name) -ForegroundColor Yellow
                 continue
@@ -184,12 +230,15 @@ function Sync-TiaDesignSheet {
                     $(if ($changed -contains $name) { 'CHANGED' } else { 'unchanged' }))
     }
 
-    if ($book -and (Test-Path $book)) { Remove-Item $book -Force -ErrorAction SilentlyContinue }
+    # ONLY the downloaded copy is disposable - $book is the user's authoring workbook when
+    # transport is 'workbook', and deleting it would destroy the design source.
+    if ($tempBook -and $book -and (Test-Path $book)) { Remove-Item $book -Force -ErrorAction SilentlyContinue }
 
     if (-not $DiffOnly) {
         $meta = [ordered]@{
             syncedUtc     = (Get-Date).ToUniversalTime().ToString('s') + 'Z'
-            sheetId       = $cfg.sheetId
+            source        = $(if ($transport -eq 'workbook') { Split-Path -Leaf $book } else { [string]$cfg.sheetId })
+            sourceSha256  = $(if ($transport -eq 'workbook') { (Get-FileHash -Algorithm SHA256 $book).Hash } else { '' })
             schemaVersion = $script:TiaSheetSchemaVersion
             transport     = $transport
             tabs          = $state
@@ -240,6 +289,10 @@ function Test-TiaDesignSheet {
         return [pscustomobject]@{ Ok=$false; Errors=$errors; Warnings=$warns; Summary='schema failed' }
     }
 
+    # Columns that are legitimately blank on some rows: SensorEval applies only to F-DI,
+    # and Polarity is checked by a dedicated rule below that names the wiring drawing gap
+    # instead of reporting a generic enum failure.
+    $blankOk = @('21_Modules.SensorEval','23_Channels.Polarity')
     foreach ($k in $script:TiaSheetEnums.Keys) {
         $t, $c = $k -split '\.', 2
         if (-not $tabs.ContainsKey($t)) { continue }
@@ -248,8 +301,19 @@ function Test-TiaDesignSheet {
         foreach ($r in $tabs[$t]) {
             $n++
             $v = [string]$r.$c
-            if ([string]::IsNullOrWhiteSpace($v)) { $errors.Add("${t} row ${n}: '$c' is blank (enum)"); continue }
+            if ([string]::IsNullOrWhiteSpace($v)) {
+                if ($blankOk -contains $k) { continue }
+                $errors.Add("${t} row ${n}: '$c' is blank (enum)"); continue
+            }
             if ($allowed -cnotcontains $v) { $errors.Add("${t} row ${n}: '$c'='$v' not in {$($allowed -join ', ')}") }
+        }
+    }
+    foreach ($r in $tabs['21_Modules']) {
+        if ($r.Kind -eq 'F-DI' -and -not $r.SensorEval) {
+            $errors.Add("21_Modules $($r.ModuleName): F-DI needs SensorEval (1oo1 or 1oo2)")
+        }
+        if ($r.Kind -notlike 'F-*' -and $r.SensorEval) {
+            $errors.Add("21_Modules $($r.ModuleName): SensorEval is meaningless on a non-F module")
         }
     }
 
@@ -293,20 +357,18 @@ function Test-TiaDesignSheet {
             $errors.Add("23_Channels ${id}: ModuleName '$($r.ModuleName)' not a module of zone $z")
         }
         if ($r.Signal -ne 'Diag') {
-            if ("$($r.DesignSlot)$($r.DesignChannel)" -eq '') {
-                $errors.Add("23_Channels ${id}: DesignSlot/DesignChannel required for a safety signal")
+            if ("$($r.Slot)$($r.Channel)" -eq '') {
+                $errors.Add("23_Channels ${id}: Slot/Channel required for a safety signal")
             } else {
-                $key = "$z/$($r.DesignSlot)/$($r.DesignChannel)"
-                if ($chanUse.ContainsKey($key)) { $errors.Add("23_Channels ${id}: design channel $key already used by $($chanUse[$key])") }
+                $key = "$z/$($r.Slot)/$($r.Channel)"
+                if ($chanUse.ContainsKey($key)) { $errors.Add("23_Channels ${id}: channel $key already used by $($chanUse[$key])") }
                 else { $chanUse[$key] = $id }
             }
             $g = "$($r.DeviceID)|$($r.Component)"
-            if (-not $group.ContainsKey($g)) { $group[$g] = @{ Paired = $r.Paired; Sigs = @() } }
+            if (-not $group.ContainsKey($g)) { $group[$g] = @{ Paired = $r.Paired; Sigs = @(); Mods = @() } }
             $group[$g].Sigs += $r.Signal
+            $group[$g].Mods += [string]$r.Slot
             if ($group[$g].Paired -ne $r.Paired) { $errors.Add("23_Channels ${id}: inconsistent Paired within $g") }
-        }
-        if ($r.AsBuiltSlot -ne $r.DesignSlot -or $r.AsBuiltChannel -ne $r.DesignChannel) {
-            $warns.Add("23_Channels ${id}: as-built s$($r.AsBuiltSlot)/ch$($r.AsBuiltChannel) -> design s$($r.DesignSlot)/ch$($r.DesignChannel) is a WIRING CHANGE (safety review)")
         }
     }
     foreach ($g in $group.Keys) {
@@ -319,6 +381,25 @@ function Test-TiaDesignSheet {
         }
     }
 
+    # Polarity is a wiring-drawing fact and cannot be inferred. A wrong guess inverts a
+    # trip, so a blank is reported as a specific gap rather than silently defaulted.
+    $noPol = @($tabs['23_Channels'] | Where-Object { $_.Signal -ne 'Diag' -and -not $_.Polarity })
+    if ($noPol.Count) {
+        # build the message first: inside Add(...) a comma binds to the method call, not
+        # to -f, which silently turned this rule into a thrown FormatError
+        $msg = "23_Channels: $($noPol.Count) safety channel(s) have no Polarity - it must " +
+               "come from the wiring drawing, never a default (first: $($noPol[0].ChannelID))"
+        $errors.Add($msg)
+    }
+
+    # UDT members referenced by the trip path must actually exist, or the generated
+    # contacts point at nothing.
+    $udtMembers = @{}
+    foreach ($r in $tabs['30_UDTs']) {
+        if (-not $udtMembers.ContainsKey($r.UDT)) { $udtMembers[$r.UDT] = @{} }
+        $udtMembers[$r.UDT][$r.Member] = $true
+    }
+
     # interlock coverage - a device wired and indicated but absent from the trip path
     # is worse than absent, because it looks functional
     $inter = @{}
@@ -326,10 +407,55 @@ function Test-TiaDesignSheet {
         if (-not $devices.ContainsKey($r.DeviceID)) { $errors.Add("34_Interlocks: unknown DeviceID '$($r.DeviceID)'"); continue }
         if ($r.Include -eq 'Yes') { $inter[$r.DeviceID] = $true }
         elseif (-not $r.Rationale) { $errors.Add("34_Interlocks $($r.DeviceID): Include=No requires a Rationale") }
+        $leaf = ($r.Member -split '\.')[-1]
+        $u = $devices[$r.DeviceID].UDT
+        if ($leaf -and $u -and $udtMembers.ContainsKey($u) -and -not $udtMembers[$u].ContainsKey($leaf)) {
+            $errors.Add("34_Interlocks $($r.DeviceID): Member '$($r.Member)' - '$leaf' is not a member of $u")
+        }
     }
     foreach ($d in $tabs['22_Devices']) {
         if ($d.InInterlock -eq 'Yes' -and -not $inter.ContainsKey($d.DeviceID)) {
             $errors.Add("34_Interlocks: device $($d.DeviceID) is InInterlock=Yes but not included in any interlock target")
+        }
+    }
+
+    # 31_Policy drives certified-block generation, so every wired device/component pair
+    # must resolve to a rule - an unmatched device would silently get no evaluation.
+    $policy = @{}
+    foreach ($r in $tabs['31_Policy']) {
+        $pk = "$($r.DeviceType)|$($r.Component)"
+        if (-not $policy.ContainsKey($pk)) { $policy[$pk] = @() }
+        $policy[$pk] += $r
+    }
+    $override = @{}
+    foreach ($r in $tabs['33_SafetyBlocks']) { $override["$($r.DeviceID)|$($r.Component)"] = $true }
+    foreach ($g in $group.Keys) {
+        $did, $comp = $g -split '\|', 2
+        if (-not $devices.ContainsKey($did)) { continue }
+        $dt = $devices[$did].DeviceType
+        $pk = "$dt|$comp"
+        if (-not $policy.ContainsKey($pk)) {
+            if (-not $override.ContainsKey($g)) {
+                $errors.Add("31_Policy: no rule for DeviceType '$dt' component '$comp' (e.g. $did) - it would get no certified evaluation")
+            }
+            continue
+        }
+        # a 1oo2 evaluator needs two channels; a single-channel device cannot use one
+        if ($group[$g].Paired -ne 'Yes') {
+            foreach ($p in $policy[$pk]) {
+                if ($p.Instruction -eq 'EV1oo2DI') {
+                    $errors.Add("31_Policy $($p.PolicyID): $did.$comp is single-channel (Paired=No) but policy applies EV1oo2DI, which needs ChA and ChB")
+                }
+            }
+        }
+    }
+    foreach ($r in $tabs['31_Policy']) {
+        foreach ($tp in @('DISCTIME','TIME_DEL')) {
+            $v = [string]$r.$tp
+            if ($v -and $v -notmatch '^(?i)T#') { $errors.Add("31_Policy $($r.PolicyID): $tp '$v' is not IEC time (T#500ms)") }
+        }
+        if ($r.Instruction -eq 'EV1oo2DI' -and -not $r.DISCTIME) {
+            $warns.Add("31_Policy $($r.PolicyID): EV1oo2DI without DISCTIME - discrepancy time is a safety parameter")
         }
     }
 
