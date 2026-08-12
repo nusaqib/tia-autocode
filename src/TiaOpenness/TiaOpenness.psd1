@@ -24,6 +24,7 @@
         'Export-TiaProgram','Get-TiaOnlineState','Invoke-TiaDownload',
         'Test-TiaSpec','Test-TiaNaming',
         'Sync-TiaDesignSheet','Test-TiaDesignSheet','Export-TiaDesignWorkbook',
+        'Invoke-TiaBuildFromSheet',
         'Get-TiaTemplate','Expand-TiaTemplate',
         'New-TiaProjectRepo'
     )
