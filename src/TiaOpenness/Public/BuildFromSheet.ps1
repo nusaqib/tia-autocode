@@ -50,7 +50,7 @@ function Invoke-TiaBuildFromSheet {
     $Path = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
     if (-not (Test-Path $Path)) { throw "No design snapshot at $Path" }
 
-    if (@('Hardware','Types') -notcontains $Phase) {
+    if (@('Hardware','Types','Data') -notcontains $Phase) {
         throw ("Phase '$Phase' is not implemented yet. Its input/output contract is defined in " +
                "the project's docs/BUILD.md; 'Hardware' and 'Types' are built today.")
     }
@@ -105,8 +105,10 @@ function Invoke-TiaBuildFromSheet {
         if (-not $ProjectPath) { $ProjectPath = $proj['ProjectPath'] }
         if (-not $ProjectPath) { $ProjectPath = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) ('_out\' + $proj['ProjectName']) }
         $ProjectPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($ProjectPath)
+        $xmlDir = Join-Path (Split-Path -Parent (Split-Path -Parent $Path)) '_out\xml'
         switch ($Phase) {
-            'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -Save:$Save }
+            'Types' { return Invoke-TiaSheetTypePhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
+            'Data'  { return Invoke-TiaSheetDataPhase -Model $model -ProjectPath $ProjectPath -XmlDir $xmlDir -Save:$Save }
         }
     }
 

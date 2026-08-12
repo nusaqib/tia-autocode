@@ -44,6 +44,105 @@ function Test-TiaFailsafeType {
     $false
 }
 
+function Get-TiaSheetBlockNumber {
+    <#
+    .SYNOPSIS
+        Deterministic block number for a zone+layer.
+    .DESCRIPTION
+        32_Blocks.Number wins when the sheet pins one. Otherwise it is derived from
+        10_Project BlockNumberBase/Step so numbers are stable across rebuilds - block
+        numbers matter in a safety project and must not shuffle when a zone is added.
+    #>
+    param($Model, [string]$Zone, [string]$Layer)
+    $row = @($Model.Blocks | Where-Object { $_.Zone -eq $Zone -and $_.Layer -eq $Layer }) | Select-Object -First 1
+    if ($row -and $row.Number) { return [int]$row.Number }
+    $base = 500; $step = 10
+    if ($Model.Project['BlockNumberBase']) { $base = [int]$Model.Project['BlockNumberBase'] }
+    if ($Model.Project['BlockNumberStep']) { $step = [int]$Model.Project['BlockNumberStep'] }
+    $zones = @($Model.Zones | ForEach-Object { $_.Zone })
+    $i = [array]::IndexOf($zones, $Zone)
+    if ($i -lt 0) { throw "Zone '$Zone' is not in 20_Zones." }
+    $offset = @{ 'Data' = 0; 'IOMap' = 1; 'Certified' = 2; 'Safety' = 3 }[$Layer]
+    if ($null -eq $offset) { $offset = 4 }
+    $base + ($i * $step) + $offset
+}
+
+function Invoke-TiaSheetDataPhase {
+    <#
+    .SYNOPSIS
+        Phase 3 (Data): one formal F-DB per zone, one member per device.
+    .DESCRIPTION
+        In  : 22_Devices (DeviceID, Zone, DeviceRef, UDT), 30_UDTs, 32_Blocks
+        Out : DB_<zone> as SW.Blocks.GlobalDB with ProgrammingLanguage F_DB
+        Emitted as XML because ProgrammingLanguage=F_DB cannot be set from SCL - an
+        SCL-created DB is an ordinary DB and the safety program will not accept it.
+    #>
+    param($Model, [string]$ProjectPath, [string]$XmlDir, [switch]$Save)
+
+    $dbPattern = $Model.Project['DbPattern']
+    if (-not $dbPattern) { $dbPattern = 'DB_{Zone}' }
+    $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
+
+    $plan = @()
+    foreach ($z in $Model.Zones) {
+        $devs = @($Model.DevicesByZone[$z.Zone])
+        if (-not $devs.Count) { Write-Host "  $($z.Zone): no devices - skipped"; continue }
+        $members = @()
+        $seen = @{}
+        foreach ($d in ($devs | Sort-Object DeviceRef)) {
+            if (-not $d.UDT) { throw "22_Devices $($d.DeviceID): no UDT" }
+            if ($udtNames -notcontains $d.UDT) { throw "22_Devices $($d.DeviceID): UDT '$($d.UDT)' is not in 30_UDTs" }
+            $nm = $d.DeviceRef
+            if ($seen.ContainsKey($nm)) {
+                throw ("22_Devices: zone $($z.Zone) has two devices with DeviceRef '$nm' " +
+                       "($($seen[$nm]) and $($d.DeviceID)) - they would collide as DB members")
+            }
+            $seen[$nm] = $d.DeviceID
+            $members += [pscustomobject]@{ Name = $nm; Datatype = $d.UDT; Comment = $d.Description }
+        }
+        $plan += [pscustomobject]@{
+            Zone = $z.Zone
+            Name = (Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Zone = $z.Zone })
+            Number = (Get-TiaSheetBlockNumber -Model $Model -Zone $z.Zone -Layer 'Data')
+            Members = $members
+        }
+    }
+    if (-not $plan.Count) { throw "22_Devices produced no DB members." }
+
+    if (-not $XmlDir) { $XmlDir = Join-Path ([IO.Path]::GetTempPath()) ("tia-fdb-" + [guid]::NewGuid().ToString('n')) }
+    $files = @()
+    foreach ($p in $plan) {
+        $xml = New-TiaFailsafeDbXml -Name $p.Name -Number $p.Number -Members $p.Members
+        $files += (Save-TiaMlDocument -Path (Join-Path $XmlDir "$($p.Name).xml") -Xml $xml)
+    }
+    Write-Host ("data: {0} F-DB(s), {1} member(s) -> {2}" -f $plan.Count,
+                (@($plan | ForEach-Object { $_.Members.Count }) | Measure-Object -Sum).Sum, $XmlDir)
+
+    $imported = @(); $cErr = 0; $compile = $null
+    $null = Open-TiaSheetProject -ProjectPath $ProjectPath
+    try {
+        foreach ($p in $plan) {
+            $f = Join-Path $XmlDir "$($p.Name).xml"
+            Import-TiaBlockXml -Path $f -Overwrite | Out-Null
+            $imported += $p.Name
+            Write-Host ("  {0,-12} DB{1,-4} {2,2} members" -f $p.Name, $p.Number, $p.Members.Count)
+        }
+        $plc = Get-TiaPlc | Select-Object -First 1
+        $compile = Invoke-TiaCompile -Plc $plc.PlcSoftware
+        try { $cErr = $compile.Errors } catch { }
+        Write-Host ("compile: state={0} errors={1}" -f $compile.State, $cErr)
+        if ($Save) { Save-TiaProject; Write-Host "saved: $ProjectPath" -ForegroundColor Green }
+    } finally {
+        try { Disconnect-TiaPortal -Close | Out-Null } catch { }
+    }
+
+    [pscustomobject]@{
+        Ok = ($cErr -eq 0); Phase = 'Data'; ProjectPath = $ProjectPath
+        Blocks = $imported; XmlDir = $XmlDir
+        CompileState = [string]$compile.State; CompileErrors = $cErr
+    }
+}
+
 function Invoke-TiaSheetTypePhase {
     <#
     .SYNOPSIS
@@ -54,7 +153,7 @@ function Invoke-TiaSheetTypePhase {
         Types are created in dependency order so a UDT that nests another is never created
         first. Members that cannot live in a fail-safe block are rejected by name.
     #>
-    param($Model, [string]$ProjectPath, [switch]$Save)
+    param($Model, [string]$ProjectPath, [string]$XmlDir, [switch]$Save)
 
     $rows = @($Model.Udts)
     if (-not $rows.Count) { throw "30_UDTs is empty - nothing to create." }
@@ -73,6 +172,7 @@ function Invoke-TiaSheetTypePhase {
         throw "30_UDTs has $($bad.Count) problem(s) - a non-F-compliant member would fail the safety compile."
     }
 
+    if (-not $XmlDir) { $XmlDir = Join-Path ([IO.Path]::GetTempPath()) ('tia-udt-' + [guid]::NewGuid().ToString('n')) }
     $order = Get-TiaUdtBuildOrder -Rows $rows
     Write-Host ("types: {0} UDT(s), creation order: {1}" -f $order.Count, ($order -join ' -> '))
 
@@ -83,17 +183,19 @@ function Invoke-TiaSheetTypePhase {
         try { $existing = @(Get-TiaType | ForEach-Object { $_.Name }) } catch { }
 
         foreach ($u in $order) {
-            if ($existing -contains $u) { $skipped += $u; Write-Host "  $u already exists - skipped"; continue }
             $members = @($rows | Where-Object { $_.UDT -eq $u } | Sort-Object { [int]$_.Order })
-            # ConvertTo-TiaUdtScl expects DataType/StartValue/Array; the sheet carries Datatype
+            # Emitted as XML, not SCL: IsFailsafeCompliant cannot be set from SCL, and
+            # without it every F-DB member using this type is rejected at the safety
+            # compile with "not permitted in the fail-safe block interface".
+            $fs = -not (@($members | Where-Object { $_.FailsafeCompliant -eq 'No' }).Count)
             $shaped = @($members | ForEach-Object {
-                [pscustomobject]@{ UDT = $u; Member = $_.Member; DataType = $_.Datatype
-                                   Array = ''; StartValue = ''; Comment = $_.Comment }
+                [pscustomobject]@{ Name = $_.Member; Datatype = $_.Datatype; Comment = $_.Comment }
             })
-            $scl = ConvertTo-TiaUdtScl -Rows $shaped
-            New-TiaType -Scl $scl | Out-Null
-            $created += $u
-            Write-Host ("  {0,-16} {1,2} members" -f $u, $members.Count)
+            $xml = New-TiaUdtXml -Name $u -Members $shaped -FailsafeCompliant $fs
+            $f = Save-TiaMlDocument -Path (Join-Path $XmlDir "UDT_$u.xml") -Xml $xml
+            Import-TiaTypeXml -Path $f -Overwrite | Out-Null
+            if ($existing -contains $u) { $skipped += $u } else { $created += $u }
+            Write-Host ("  {0,-16} {1,2} members  failsafe={2}" -f $u, $members.Count, $fs)
         }
 
         $plc = Get-TiaPlc | Select-Object -First 1

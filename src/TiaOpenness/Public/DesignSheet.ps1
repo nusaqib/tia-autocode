@@ -353,9 +353,18 @@ function Test-TiaDesignSheet {
     $udts    = @{}; foreach ($r in $tabs['30_UDTs'])   { $udts[$r.UDT] = $true }
     $mods    = @{}; foreach ($r in $tabs['21_Modules']){ $mods["$($r.Zone)/$($r.ModuleName)"] = $r }
 
+    $refSeen = @{}; $idSeen = @{}
     foreach ($r in $tabs['22_Devices']) {
         if (-not $zones.ContainsKey($r.Zone)) { $errors.Add("22_Devices $($r.DeviceID): unknown Zone '$($r.Zone)'") }
         if ($r.UDT -and -not $udts.ContainsKey($r.UDT)) { $errors.Add("22_Devices $($r.DeviceID): UDT '$($r.UDT)' not in 30_UDTs") }
+        if ($idSeen.ContainsKey($r.DeviceID)) { $errors.Add("22_Devices: duplicate DeviceID '$($r.DeviceID)'") }
+        else { $idSeen[$r.DeviceID] = $true }
+        # DeviceRef becomes the F-DB member name, so it must be unique within its zone or
+        # two devices silently share one set of safety data
+        $k = "$($r.Zone)|$($r.DeviceRef)"
+        if ($refSeen.ContainsKey($k)) {
+            $errors.Add("22_Devices: zone $($r.Zone) has two devices with DeviceRef '$($r.DeviceRef)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
+        } else { $refSeen[$k] = $r.DeviceID }
     }
     foreach ($r in $tabs['21_Modules']) {
         if (-not $zones.ContainsKey($r.Zone)) { $errors.Add("21_Modules $($r.ModuleName): unknown Zone '$($r.Zone)'") }
