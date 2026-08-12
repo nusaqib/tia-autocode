@@ -434,6 +434,7 @@ function Get-TiaSheetCertifiedPlan {
                     Area = $d.Area; Device = $d.Device; Component = $comp; Instruction = $r.Instruction } }
             $plan += [pscustomobject]@{
                 Area = $d.Area; DeviceID = $did; Device = $d.Device; Component = $comp
+                DeviceUdt = $d.UDT
                 Instruction = $r.Instruction; Version = $r.Version; Instance = $inst
                 Order = [int]$r.Order
                 ChA = $(if ($chA) { "$($rows[0].Db).$($chA.Member)" }); ChB = $(if ($chB) { "$($rows[0].Db).$($chB.Member)" })
@@ -469,6 +470,23 @@ function Invoke-TiaSheetCertifiedPhase {
     $fbPattern = $Model.Project['BlockPattern']
     if (-not $fbPattern) { $fbPattern = 'FB_{Layer}' }
 
+    # Which members each UDT actually has, and which type a device+component resolves to.
+    # An output is only wired when its landing member exists, so adding a pin can never
+    # create the dormant-member/undefined-tag pair of failures.
+    $udtMembers = @{}; $udtMemberType = @{}
+    foreach ($u in $Model.Udts) {
+        if (-not $udtMembers.ContainsKey($u.UDT)) { $udtMembers[$u.UDT] = @{} }
+        $udtMembers[$u.UDT][$u.Member] = $true
+        $udtMemberType["$($u.UDT)|$($u.Member)"] = ([string]$u.Datatype).Trim().Trim('"')
+    }
+    function Resolve-StemType($deviceUdt, $component) {
+        # a nested component carries its own type (UDT_SCB.EMO is a UDT_SafeInput);
+        # otherwise the device's own type is the one that holds the members
+        $t = $udtMemberType["$deviceUdt|$component"]
+        if ($t -and $udtMembers.ContainsKey($t)) { return $t }
+        $deviceUdt
+    }
+
     # ONE Certified block for the whole system, networks grouped by area.
     $units = @(); $statics = @(); $id = 3; $perArea = @()
     foreach ($z in $Model.Stations) {
@@ -478,7 +496,10 @@ function Invoke-TiaSheetCertifiedPhase {
         foreach ($g in ($rows | Group-Object DeviceID, Component)) {
             $b = New-TiaFlgBuilder
             $prev1oo2 = $false
-            foreach ($r in ($g.Group | Sort-Object Order)) {
+            $chain = @($g.Group | Sort-Object Order)
+            for ($ci = 0; $ci -lt $chain.Count; $ci++) {
+                $r = $chain[$ci]
+                $isLast = ($ci -eq $chain.Count - 1)
                 $statics += [pscustomobject]@{ Name = $r.Instance; Datatype = $r.Instruction }
                 # Operand paths are derived from the channel plan's member stem, never from
                 # a pattern: only the stem knows whether this device's UDT nests a Component
@@ -486,14 +507,39 @@ function Invoke-TiaSheetCertifiedPhase {
                 $in = @{}; $out = @{}
                 switch ($r.Instruction) {
                     'EV1oo2DI' { $in['IN1'] = $r.ChA; $in['IN2'] = $r.ChB; $in['ACK'] = $r.AckSource
-                                 $out['Q'] = "$($r.Stem).1oo2_OK" }
+                                 $out['Q'] = "$($r.Stem).Eval_OK"
+                                 # only the 1oo2 evaluator produces a discrepancy fault
+                                 if ($udtMembers[(Resolve-StemType $r.DeviceUdt $r.Component)]['Disc_Flt']) {
+                                     $out['DISC_FLT'] = "$($r.Stem).Disc_Flt"
+                                 } }
                     'SFDOOR'   { $in['IN1'] = $r.ChA; $in['IN2'] = $r.ChB; $in['ACK'] = $r.AckSource
                                  $out['Q'] = "$($r.Stem).Safe" }
                     # ESTOP1 follows the 1oo2 evaluator when policy chains them (D04), so it
                     # consumes the evaluated result rather than a raw channel.
-                    'ESTOP1'   { $in['E_STOP'] = $(if ($prev1oo2) { "$($r.Stem).1oo2_OK" } else { $r.ChA })
+                    'ESTOP1'   { $in['E_STOP'] = $(if ($prev1oo2) { "$($r.Stem).Eval_OK" } else { $r.ChA })
                                  $in['ACK'] = $r.AckSource
-                                 $out['Q'] = "$($r.Stem).Safe" }
+                                 $out['Q'] = "$($r.Stem).Safe"
+                                 # stop category 1: only ESTOP1 has a delayed release, and
+                                 # only some types declare somewhere to put it
+                                 if ($udtMembers[(Resolve-StemType $r.DeviceUdt $r.Component)]['Safe_Delayed']) {
+                                     $out['Q_DELAY'] = "$($r.Stem).Safe_Delayed"
+                                 } }
+                }
+                # ACK_REQ and DIAG come from the LAST instruction in the chain only. Both
+                # instructions of a chained pair produce them, and wiring both would drive
+                # one coil from two networks - the operator acknowledges the terminal block,
+                # so that is the one whose request and diagnostics are published.
+                #
+                # DIAG is a BYTE, and BYTE is not an F-compliant data type (Bool, Int,
+                # Word, DInt, Time are). So DIAG cannot land in an F-DB at all - not as
+                # Bool (type mismatch at the network) and not as Byte (rejected in the
+                # F-UDT). It is deliberately non-safety-related service information;
+                # Siemens intends it for a STANDARD DB. Until such a DB exists the pin
+                # stays OpenCon - which is what omitting it from $out produces.
+                if ($isLast) {
+                    $stemType = Resolve-StemType $r.DeviceUdt $r.Component
+                    if ($udtMembers[$stemType]['Ack_Req']) { $out['ACK_REQ'] = "$($r.Stem).Ack_Req" }
+                    if ($udtMembers[$stemType]['Diag'])    { $out['DIAG']    = "$($r.Stem).Diag" }
                 }
                 $prev1oo2 = ($r.Instruction -eq 'EV1oo2DI')
                 Add-TiaFlgCertifiedCall -Builder $b -Instruction $r.Instruction -InstanceName $r.Instance `
@@ -567,7 +613,15 @@ function Invoke-TiaSheetSafetyPhase {
     foreach ($g in ($cert | Group-Object DeviceID, Component)) {
         $last = @($g.Group | Sort-Object Order)[-1]
         $terminal["$($last.DeviceID)|$($last.Component)"] =
-            $(if ($last.Instruction -eq 'EV1oo2DI') { "$($last.Stem).1oo2_OK" } else { "$($last.Stem).Safe" })
+            $(if ($last.Instruction -eq 'EV1oo2DI') { "$($last.Stem).Eval_OK" } else { "$($last.Stem).Safe" })
+    }
+
+    # Which UDTs actually carry a Device_Safe summary. A single-component type does not
+    # need one - its device result IS the component's terminal output, and computing an
+    # AND of one term would be a second name for the same bit.
+    $udtHasDeviceSafe = @{}
+    foreach ($u in $Model.Udts) {
+        if ($u.Member -eq 'Device_Safe') { $udtHasDeviceSafe[$u.UDT] = $true }
     }
 
     $fbPattern = $Model.Project['BlockPattern']
@@ -581,16 +635,29 @@ function Invoke-TiaSheetSafetyPhase {
     foreach ($z in $Model.Stations) {
         $db = "$dbName.$($z.Area)"
 
-        # one network per device: AND its components' terminal results into Device_Safe
-        $areaDevs = @()
+        # One network per MULTI-component device: AND its components' terminal results into
+        # Device_Safe. A single-component device contributes its terminal output directly -
+        # $contrib records which, so 34_Interlocks never has to know a device's shape.
+        $areaDevs = @(); $contrib = @{}
         foreach ($d in @($Model.DevicesByArea[$z.Area] | Sort-Object Device)) {
             $comps = @($terminal.Keys | Where-Object { $_ -like "$($d.DeviceID)|*" })
             if (-not $comps.Count) { continue }
             $srcs = @($comps | Sort-Object | ForEach-Object { $terminal[$_] })
-            $b = New-TiaFlgBuilder
-            Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.Device).Device_Safe") | Out-Null
-            $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) $($d.Device) Device_Safe")
-            $id += 5
+            if ($udtHasDeviceSafe[$d.UDT]) {
+                $b = New-TiaFlgBuilder
+                Add-TiaFlgSeriesRung -Builder $b -From $srcs -To @("$db.$($d.Device).Device_Safe") | Out-Null
+                $units += (New-TiaFlgCompileUnit -Builder $b -Id $id -Title "$($z.Area) $($d.Device) Device_Safe")
+                $id += 5
+                $contrib[$d.DeviceID] = "$db.$($d.Device).Device_Safe"
+            } else {
+                # No summary member on this type, so more than one component would have
+                # nowhere to AND into - that is a design error, not something to average away.
+                if ($srcs.Count -gt 1) {
+                    throw ("22_Devices $($d.DeviceID): UDT '$($d.UDT)' has $($srcs.Count) components " +
+                           "but no Device_Safe member to summarise them into.")
+                }
+                $contrib[$d.DeviceID] = $srcs[0]
+            }
             $areaDevs += $d
         }
 
@@ -601,7 +668,7 @@ function Invoke-TiaSheetSafetyPhase {
             $d = $Model.DeviceById[$i.DeviceID]
             if (-not $d) { continue }
             if ($areaDevs -notcontains $d) { continue }   # no certified result to contribute
-            $members += "$db.$($d.Device).Device_Safe"
+            $members += $contrib[$d.DeviceID]
         }
         if (-not $members.Count) { $skippedAreas += $z.Area; continue }
         $b = New-TiaFlgBuilder

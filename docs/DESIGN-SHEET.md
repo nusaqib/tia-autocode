@@ -264,6 +264,19 @@ two devices onto one certified instance.
 
 - `30_UDTs.Datatype` - S7 primitive or a quoted UDT reference (`"UDT_SafeInput"`).
   `Order` fixes member order. Nested UDTs must be defined before use.
+
+> **`FailsafeCompliant=Yes` restricts `Datatype` to `Bool`, `Int`, `DInt`, `Word`, `Time`**
+> (or a nested UDT that is itself F-compliant). Those are the only F-compliant elementary
+> types; anything else is rejected when the F-DB compiles. The validator enforces this
+> offline, because TIA only complains several phases into a live build.
+>
+> **This is why the certified `DIAG` output has no home in the design.** `DIAG` is a
+> `BYTE` on `ESTOP1`/`SFDOOR`/`EV1oo2DI`, and `BYTE` is not F-compliant - so it cannot
+> land in the system F-DB in any form. Declaring the member `Bool` instead does not help:
+> the connection is type-checked, so the UDT compiles and then **every certified network
+> fails**. `DIAG` is deliberately non-safety-related service information and Siemens
+> intends it for a *standard* DB. Until one exists the pin is left `OpenCon`, which is
+> what the certified phase emits when the landing member is absent.
 - `32_Blocks` is now FIVE rows, not one per area per layer: the system F-DB, the three
   layer F-FBs and the runtime. `Layer` enum: `Data`, `IOMap`, `Certified`, `Safety`,
   `Runtime`. Leave `Area` blank - these blocks span the system.
@@ -310,11 +323,25 @@ Safety:
 13. `Invert=Yes` channels are listed by name (each one negates a contact).
 14. `Verified=No` rows are reported; with `-RequireVerified` they are errors. On
     `23_Channels` this is the gate for signal sense - see `Invert`.
+15. `34_Interlocks.Member` resolves to a real member of that device's UDT - otherwise the
+    generated contact would point at nothing.
+16. A `FailsafeCompliant=Yes` member's `Datatype` is F-compliant (`Bool`, `Int`, `DInt`,
+    `Word`, `Time`, or a nested F-compliant UDT).
 
 Exit code is non-zero on any error. Warnings do not fail the build but are printed.
 
 ## Schema history
 
+- **v1.6** - **device UDTs carry the certified diagnostics.** `UDT_SafeInput` is renamed
+  throughout (`1oo2_OK` -> `Eval_OK`; `Discrepancy` -> `Disc_Flt`; `AckReq` -> `Ack_Req`)
+  and loses `Fault`, `Latch` and `Device_Safe` - dormant members that a reader would take
+  for working logic. `Eval_OK`, `Disc_Flt` and `Ack_Req` are now genuinely driven by the
+  certified phase. Two new authored types: `UDT_EMO` (adds `Safe_Delayed` for
+  `ESTOP1.Q_DELAY`) and `UDT_Door` (`SFDOOR` alone - no `Eval_OK`/`Disc_Flt`, since
+  `SFDOOR` has neither pin). `Device_Safe` now appears only on multi-component types
+  (`UDT_SCB`, `UDT_CSD`); a single-component device contributes `.Safe` to the interlock
+  directly. `DIAG` is deliberately NOT landed - see the note under `30_UDTs`. New
+  validation rules 15 and 16.
 - **v1.5** - `21_Modules.SensorEval` REMOVED (see the note under `21_Modules`). The
   Hardware phase now applies `F_DestAddr` / `F_MonitorTime` where declared, verifies them by
   read-back, fails on a duplicate built F-destination address, and records the built values

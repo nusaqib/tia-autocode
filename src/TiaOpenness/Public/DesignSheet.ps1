@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.5'
+$script:TiaSheetSchemaVersion = '1.6'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -63,6 +63,31 @@ $script:TiaSheetSchemaVersion = '1.5'
 #     an F-DI, none of them evaluation - so the engine can neither set it NOR read it back
 #     to check. It is a manual TIA step with no automated verification, and saying that
 #     once in the docs is honest where a per-module column implied a check that never ran.
+#
+# v1.6 changes - UDT_SafeInput vocabulary (data, not schema: 30_UDTs is authored):
+#   - 1oo2_OK -> Eval_OK. A leading digit is not a bare-legal S7 identifier, so every SCL
+#     reference had to quote it. Eval_OK is legal, keeps the house _OK suffix, and names
+#     the STAGE - the three safe-ish values now read ChA/ChB -> Eval_OK -> Safe.
+#   - Discrepancy -> Disc_Flt, AckReq -> Ack_Req: each mirrors the certified pin that
+#     drives it (DISC_FLT, ACK_REQ), so a reviewer holding the Siemens safety manual maps
+#     member to pin without a lookup table.
+#   - Fault and Latch dropped: nothing wrote either. Fault matched no pin at all, and
+#     ESTOP1 already latches internally until acknowledged. A member nothing writes reads
+#     as working logic and is permanently FALSE - it looks safe and is silently broken.
+#   - Device_Safe dropped from UDT_SafeInput: with one component it was an AND of one term,
+#     a second name for .Safe. Multi-component types (UDT_SCB, UDT_CSD) keep it. The build
+#     picks the right contributor per device, so 34_Interlocks never has to know the shape.
+#   - ACK_REQ / DISC_FLT / Q_DELAY are now WIRED instead of going to OpenCon, but only where
+#     the resolved UDT declares a landing member. Only the TERMINAL instruction publishes
+#     ACK_REQ - both halves of a chained pair produce one, and wiring both would drive one
+#     coil from two networks.
+#   - DIAG is NOT landed anywhere and stays OpenCon. It is a BYTE, and BYTE is not an
+#     F-compliant type, so it cannot live in an F-DB in any form: as Byte the F-UDT is
+#     rejected, and as Bool the UDT compiles and then EVERY certified network fails the
+#     connection type check. It is deliberately non-safety-related service information that
+#     Siemens intends for a STANDARD DB. New validation rule 16 catches the whole class.
+#   - New authored types UDT_EMO (adds Safe_Delayed for ESTOP1.Q_DELAY) and UDT_Door
+#     (SFDOOR alone - no Eval_OK/Disc_Flt, since SFDOOR has neither pin).
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
     '20_Stations'    = @('Area','Name','Description','Station_Name','Station_Label','IM_MLFB','IM_FW','IO_System','IP_Address','Subnet_Mask','Device_Number','Device_Name','Verified','Notes')
@@ -526,6 +551,22 @@ function Test-TiaDesignSheet {
     foreach ($r in $tabs['30_UDTs']) {
         if (-not $udtMembers.ContainsKey($r.UDT)) { $udtMembers[$r.UDT] = @{} }
         $udtMembers[$r.UDT][$r.Member] = $true
+    }
+
+    # A UDT marked FailsafeCompliant=Yes lands in an F-DB, and an F-DB accepts only the
+    # F-compliant elementary types. Byte/DByte/Real/etc are rejected by TIA at compile
+    # time, several phases after the sheet looks fine - so catch it offline. This is how
+    # the certified DIAG output (a BYTE) gets caught: it cannot live in an F-DB at all.
+    $fTypes = @('Bool','Int','DInt','Word','Time')
+    foreach ($r in $tabs['30_UDTs']) {
+        if ($r.FailsafeCompliant -ne 'Yes') { continue }
+        $t = ([string]$r.Datatype).Trim().Trim('"')
+        if (-not $t) { continue }
+        # a nested UDT reference is fine as long as that UDT is itself F-compliant
+        if ($udtMembers.ContainsKey($t)) { continue }
+        if ($t -notin $fTypes) {
+            $errors.Add("30_UDTs $($r.UDT).$($r.Member): datatype '$t' is not F-compliant (allowed: $($fTypes -join ', '), or a nested F-compliant UDT)")
+        }
     }
 
     # interlock coverage - a device wired and indicated but absent from the trip path
