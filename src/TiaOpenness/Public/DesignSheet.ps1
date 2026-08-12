@@ -5,7 +5,7 @@
 # on-demand sync into a COMMITTED CSV snapshot - never a build-time dependency, so the
 # build stays reproducible from a git checkout and CI stays offline.
 
-$script:TiaSheetSchemaVersion = '1.1'
+$script:TiaSheetSchemaVersion = '1.2'
 
 # tab -> required columns (exact casing). Consumers do case-sensitive property access.
 #
@@ -24,9 +24,17 @@ $script:TiaSheetSchemaVersion = '1.1'
 #     Previously every device carried its own 33_SafetyBlocks row (131 rows mechanically
 #     derived from DeviceType) - 131 chances to drift from a 10-line rule.
 #   - 33_SafetyBlocks is now an OVERRIDE tab: only rows that deviate from 31_Policy.
+#
+# v1.2 changes:
+#   - 20_Zones RENAMED to 20_Stations. Each row is one ET200SP station on the PROFINET IO
+#     system, and calling it a "Device" tab would collide with 22_Devices (field devices) -
+#     two different meanings for DeviceID/DeviceRef in a safety review.
+#   - 20_Stations gains IpAddress / SubnetMask / DeviceNumber / DeviceName. These were
+#     auto-assigned by TIA and recorded nowhere, so they were neither reviewable nor stable
+#     across rebuilds. Blank still means "let TIA assign".
 $script:TiaSheetSchema = [ordered]@{
     '10_Project'     = @('Key','Value','Notes')
-    '20_Zones'       = @('Zone','Name','Description','Station','StationLabel','IM_MLFB','IM_FW','IOSystem','Verified','Notes')
+    '20_Stations'    = @('Zone','Name','Description','Station','StationLabel','IM_MLFB','IM_FW','IOSystem','IpAddress','SubnetMask','DeviceNumber','DeviceName','Verified','Notes')
     '21_Modules'     = @('Zone','Slot','Kind','MLFB','FW','ModuleName','InputBytes','F_DestAddr','F_MonitorTime','SensorEval','AsBuiltRail','DrawingRef','Verified','Comment')
     '22_Devices'     = @('DeviceID','Zone','DeviceRef','DeviceType','UDT','Description','Location','DrawingRef','InInterlock','SF_ID','Verified','Notes')
     '23_Channels'    = @('ChannelID','DeviceID','Component','Signal','Paired','Polarity','Slot','Channel','Terminal','LegacyTagName','ModuleName','DrawingRef','Description','Verified')
@@ -51,7 +59,7 @@ $script:TiaSheetEnums = @{
     '34_Interlocks.Target'       = @('Interlocks_OK','Zone_Safe')
     '34_Interlocks.Include'      = @('Yes','No')
 }
-$script:TiaSheetVerifiedCols = @('20_Zones','21_Modules','22_Devices','23_Channels','31_Policy','33_SafetyBlocks')
+$script:TiaSheetVerifiedCols = @('20_Stations','21_Modules','22_Devices','23_Channels','31_Policy','33_SafetyBlocks')
 
 # Headers for every known tab, including the optional/governance ones. Used to preserve a
 # tab's header when it legitimately has zero data rows (the xlsx reader consumes row 1 as
@@ -348,7 +356,7 @@ function Test-TiaDesignSheet {
         $errors.Add("10_Project: DefaultPolarity '$($proj['DefaultPolarity'])' must be NC or NO")
     }
 
-    $zones   = @{}; foreach ($r in $tabs['20_Zones'])  { $zones[$r.Zone] = $r }
+    $zones   = @{}; foreach ($r in $tabs['20_Stations'])  { $zones[$r.Zone] = $r }
     $devices = @{}; foreach ($r in $tabs['22_Devices']){ $devices[$r.DeviceID] = $r }
     $udts    = @{}; foreach ($r in $tabs['30_UDTs'])   { $udts[$r.UDT] = $true }
     $mods    = @{}; foreach ($r in $tabs['21_Modules']){ $mods["$($r.Zone)/$($r.ModuleName)"] = $r }
@@ -365,6 +373,21 @@ function Test-TiaDesignSheet {
         if ($refSeen.ContainsKey($k)) {
             $errors.Add("22_Devices: zone $($r.Zone) has two devices with DeviceRef '$($r.DeviceRef)' ($($refSeen[$k]), $($r.DeviceID)) - they would collide as DB members")
         } else { $refSeen[$k] = $r.DeviceID }
+    }
+    $ipSeen = @{}; $dnSeen = @{}; $stSeen = @{}
+    foreach ($r in $tabs['20_Stations']) {
+        # A duplicate IP or PROFINET device number is a network fault the compiler will not
+        # catch; a duplicate station name collides in the project tree.
+        foreach ($pair in @(@('IpAddress',$ipSeen), @('DeviceNumber',$dnSeen), @('Station',$stSeen))) {
+            $col = $pair[0]; $map = $pair[1]
+            $v = [string]$r.$col
+            if (-not $v) { continue }
+            if ($map.ContainsKey($v)) { $errors.Add("20_Stations: $col '$v' used by both $($map[$v]) and $($r.Zone)") }
+            else { $map[$v] = $r.Zone }
+        }
+        if ($r.IpAddress -and $r.IpAddress -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+            $errors.Add("20_Stations $($r.Zone): IpAddress '$($r.IpAddress)' is not a dotted IPv4 address")
+        }
     }
     foreach ($r in $tabs['21_Modules']) {
         if (-not $zones.ContainsKey($r.Zone)) { $errors.Add("21_Modules $($r.ModuleName): unknown Zone '$($r.Zone)'") }
@@ -536,7 +559,7 @@ function Test-TiaDesignSheet {
     }
 
     $summary = ("{0} zones, {1} modules, {2} devices, {3} channels, {4} safety blocks, {5} unverified" -f
-        $tabs['20_Zones'].Count, $tabs['21_Modules'].Count, $tabs['22_Devices'].Count,
+        $tabs['20_Stations'].Count, $tabs['21_Modules'].Count, $tabs['22_Devices'].Count,
         $tabs['23_Channels'].Count, $tabs['33_SafetyBlocks'].Count, $unver)
     [pscustomobject]@{ Ok = ($errors.Count -eq 0); Errors = $errors; Warnings = $warns; Summary = $summary }
 }

@@ -57,7 +57,7 @@ function Invoke-TiaBuildFromSheet {
     # polarity in 23_Channels must not block UDT creation, which never reads that tab.
     # Anything global (stale snapshot, schema failure) blocks every phase.
     $phaseTabs = @{
-        'Hardware'  = @('10_Project','20_Zones','21_Modules')
+        'Hardware'  = @('10_Project','20_Stations','21_Modules')
         'Types'     = @('30_UDTs')
         'Data'      = @('22_Devices','30_UDTs','32_Blocks')
         'Tags'      = @('23_Channels','21_Modules')
@@ -65,7 +65,7 @@ function Invoke-TiaBuildFromSheet {
         'Certified' = @('31_Policy','33_SafetyBlocks','22_Devices','23_Channels')
         'Safety'    = @('34_Interlocks','22_Devices')
     }
-    $allTabs = @('10_Project','20_Zones','21_Modules','22_Devices','23_Channels','30_UDTs',
+    $allTabs = @('10_Project','20_Stations','21_Modules','22_Devices','23_Channels','30_UDTs',
                  '31_Policy','32_Blocks','33_SafetyBlocks','34_Interlocks','35_Outputs')
 
     # Some errors are about a single COLUMN, not the whole tab. Polarity decides whether
@@ -153,16 +153,16 @@ function Invoke-TiaBuildFromSheet {
     foreach ($k in @('ProjectName','PlcName','CpuMLFB','SubnetName','IoSystemName')) {
         if (-not $proj[$k]) { $fatal += "10_Project: missing key '$k'" }
     }
-    if (-not @($model.Zones).Count)   { $fatal += "20_Zones is empty" }
+    if (-not @($model.Stations).Count)   { $fatal += "20_Stations is empty" }
     if (-not @($model.Modules).Count) { $fatal += "21_Modules is empty" }
     foreach ($m in $model.Modules) {
         if (-not $m.MLFB)       { $fatal += "21_Modules $($m.Zone)/$($m.ModuleName): no MLFB" }
         if (-not $m.ModuleName) { $fatal += "21_Modules $($m.Zone) slot $($m.Slot): no ModuleName" }
     }
-    foreach ($z in $model.Zones) {
-        if (-not $z.Station) { $fatal += "20_Zones $($z.Zone): no Station name" }
+    foreach ($z in $model.Stations) {
+        if (-not $z.Station) { $fatal += "20_Stations $($z.Zone): no Station name" }
         $isLocal = ($z.Zone -eq $proj['CpuLocalZone'])
-        if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Zones $($z.Zone): remote station needs IM_MLFB" }
+        if (-not $isLocal -and -not $z.IM_MLFB) { $fatal += "20_Stations $($z.Zone): remote station needs IM_MLFB" }
     }
     if ($fatal.Count) {
         foreach ($f in $fatal) { Write-Host "  $f" -ForegroundColor Red }
@@ -176,7 +176,7 @@ function Invoke-TiaBuildFromSheet {
     $localZone = $proj['CpuLocalZone']
     Write-Host ("build: {0} -> {1}" -f $proj['ProjectName'], $ProjectPath)
     Write-Host ("  {0} zones, {1} modules, CPU {2} ({3} local: {4})" -f
-        @($model.Zones).Count, @($model.Modules).Count, $proj['CpuMLFB'],
+        @($model.Stations).Count, @($model.Modules).Count, $proj['CpuMLFB'],
         $proj['PlcName'], $(if ($localZone) { $localZone } else { '(none)' }))
 
     # --- project + CPU ------------------------------------------------------------------
@@ -194,7 +194,7 @@ function Invoke-TiaBuildFromSheet {
     $cpuDev = $project.Devices | Where-Object { $_.Name -eq $proj['PlcName'] } | Select-Object -First 1
     if (-not $cpuDev) { throw "CPU '$($proj['PlcName'])' was not created." }
 
-    $plugged = 0; $failed = @(); $stations = @()
+    $plugged = 0; $failed = @(); $stations = @(); $netWarn = @()
     $niType = [Siemens.Engineering.HW.Features.NetworkInterface]
 
     # --- CPU-local zone: modules ride the CPU's own ET200SP rack ------------------------
@@ -231,10 +231,21 @@ function Invoke-TiaBuildFromSheet {
     $ctrl = $cpuNi.IoControllers | Select-Object -First 1
     $ioSystem = $ctrl.IoSystem
     if ($null -eq $ioSystem) { $ioSystem = $ctrl.CreateIoSystem($proj['IoSystemName']) }
+    # the CPU takes its addressing from the local zone's station row, so the controller is
+    # declared in the same place as every device it controls
+    if ($localZone) {
+        $lz = @($model.Stations | Where-Object { $_.Zone -eq $localZone }) | Select-Object -First 1
+        if ($lz) {
+            $cn = Set-TiaStationNetwork -Node ($cpuNi.Nodes | Select-Object -First 1) -Interface $cpuNi `
+                      -IpAddress $lz.IpAddress -SubnetMask $lz.SubnetMask -DeviceName $lz.DeviceName
+            foreach ($f in $cn.Failed) { $netWarn += "$($proj['PlcName']) : $f" }
+            if ($cn.Applied.Count) { Write-Host ("  CPU network: " + ($cn.Applied -join ' ')) }
+        }
+    }
     Write-Host ("  subnet '{0}', IO system '{1}'" -f $subnet.Name, $ioSystem.Name)
 
     # --- remote stations ------------------------------------------------------------------
-    foreach ($z in $model.Zones) {
+    foreach ($z in $model.Stations) {
         if ($localOk -and $z.Zone -eq $localZone) { continue }
         $station = $z.Station
         $imFw = $z.IM_FW
@@ -258,13 +269,23 @@ function Invoke-TiaBuildFromSheet {
         $imNiItem = $items | Where-Object { $_.Name -match 'PROFINET' } | Select-Object -First 1
         if (-not $imNiItem) { throw "Station '$station' has no PROFINET interface." }
         $imNi = Get-TiaEngineeringService -Item $imNiItem -Type $niType
-        ($imNi.Nodes | Select-Object -First 1).ConnectToSubnet($subnet)
+        $imNode = $imNi.Nodes | Select-Object -First 1
+        $imNode.ConnectToSubnet($subnet)
         ($imNi.IoConnectors | Select-Object -First 1).ConnectToIoSystem($ioSystem)
 
-        Write-Host ("  {0,-9} {1,2}/{2} modules -> IO system" -f $station, $n, $mods.Count)
+        $net = Set-TiaStationNetwork -Node $imNode -Interface $imNi -IpAddress $z.IpAddress `
+                   -SubnetMask $z.SubnetMask -DeviceNumber $z.DeviceNumber -DeviceName $z.DeviceName
+        foreach ($f in $net.Failed) { $netWarn += "$station : $f" }
+
+        Write-Host ("  {0,-9} {1,2}/{2} modules -> IO system{3}" -f $station, $n, $mods.Count,
+                    $(if ($net.Applied.Count) { '  ' + ($net.Applied -join ' ') } else { '' }))
         $stations += [pscustomobject]@{ Zone = $z.Zone; Station = $station; Device = $iod; Local = $false }
     }
 
+    if ($netWarn.Count) {
+        Write-Host "  $($netWarn.Count) network attribute(s) could not be set (names vary by TIA version):" -ForegroundColor Yellow
+        foreach ($w in $netWarn) { Write-Host "    $w" -ForegroundColor Yellow }
+    }
     if ($failed.Count) {
         Write-Host "  $($failed.Count) module(s) FAILED to plug:" -ForegroundColor Red
         foreach ($f in $failed) { Write-Host "    $f" -ForegroundColor Red }
@@ -305,7 +326,7 @@ function Invoke-TiaBuildFromSheet {
         Ok           = ($failed.Count -eq 0 -and $cErr -eq 0)
         Phase        = $Phase
         ProjectPath  = $ProjectPath
-        Zones        = @($model.Zones).Count
+        Zones        = @($model.Stations).Count
         Stations     = $stations.Count
         ModulesPlanned = @($model.Modules | Where-Object { $_.Kind -ne 'IM' }).Count
         ModulesPlugged = $plugged

@@ -37,7 +37,7 @@ function Read-TiaSheetModel {
 
     $m = [ordered]@{
         Project      = $proj
-        Zones        = T '20_Zones'
+        Stations     = T '20_Stations'
         Modules      = T '21_Modules'
         Devices      = T '22_Devices'
         Channels     = T '23_Channels'

@@ -104,6 +104,56 @@ function Get-TiaUdtBuildOrder {
     $order
 }
 
+function Set-TiaStationNetwork {
+    <#
+    .SYNOPSIS
+        Apply the declared PROFINET addressing to a station's interface.
+    .DESCRIPTION
+        Blank values are left alone, so TIA keeps assigning them - the sheet declares only
+        what it wants pinned. Each attribute is set independently and failures are returned
+        rather than thrown: the exact attribute names vary by TIA version, and a naming
+        mismatch must not abort a build that is otherwise correct.
+    .PARAMETER Node
+        The interface Node (from NetworkInterface.Nodes).
+    .PARAMETER Interface
+        The NetworkInterface service object.
+    #>
+    param($Node, $Interface, [string]$IpAddress, [string]$SubnetMask,
+          [string]$DeviceNumber, [string]$DeviceName)
+    $applied = @(); $failed = @()
+
+    if ($IpAddress -and $Node) {
+        try { $Node.SetAttribute('Address', $IpAddress); $applied += "ip=$IpAddress" }
+        catch { $failed += "Address: $($_.Exception.Message)" }
+    }
+    if ($SubnetMask -and $Node) {
+        try { $Node.SetAttribute('SubnetMask', $SubnetMask); $applied += "mask=$SubnetMask" }
+        catch { $failed += "SubnetMask: $($_.Exception.Message)" }
+    }
+    if ($DeviceName -and $Node) {
+        # the PROFINET name is generated from the station name unless auto-generation is
+        # switched off first, so the order matters
+        try { $Node.SetAttribute('PnDeviceNameAutoGeneration', $false) } catch { }
+        foreach ($attr in @('PnDeviceName','DeviceName')) {
+            try { $Node.SetAttribute($attr, $DeviceName); $applied += "pnname=$DeviceName"; break }
+            catch { $failed += "${attr}: $($_.Exception.Message)" }
+        }
+    }
+    if ($DeviceNumber -and $Interface) {
+        $n = 0
+        if ([int]::TryParse($DeviceNumber, [ref]$n)) {
+            $conn = $Interface.IoConnectors | Select-Object -First 1
+            if ($conn) {
+                foreach ($attr in @('PnDeviceNumber','DeviceNumber')) {
+                    try { $conn.SetAttribute($attr, $n); $applied += "devno=$n"; break }
+                    catch { $failed += "${attr}: $($_.Exception.Message)" }
+                }
+            }
+        } else { $failed += "DeviceNumber '$DeviceNumber' is not an integer" }
+    }
+    [pscustomobject]@{ Applied = $applied; Failed = $failed }
+}
+
 function Get-TiaModuleAddress {
     <#
     .SYNOPSIS

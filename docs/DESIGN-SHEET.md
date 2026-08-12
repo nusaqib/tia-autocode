@@ -17,7 +17,7 @@ Google Sheet --Sync-TiaDesignSheet--> design/csv/*.csv  (COMMITTED = the build i
 | Tab | Produces |
 |---|---|
 | `10_Project` | the project, the CPU, safety settings, naming + numbering rules |
-| `20_Zones` | PROFINET stations and the IO system |
+| `20_Stations` | PROFINET stations, addressing and the IO system |
 | `21_Modules` | plugged modules (CPU-local and remote) |
 | `22_Devices` | typed members of each zone F-DB |
 | `23_Channels` | PLC tags at live addresses + the IOMap rungs (incl. polarity inversion) |
@@ -71,6 +71,8 @@ Numbering leaves gaps so lifecycle tabs (`10_Requirements`, `11_SafetyFunctions`
 |---|---|
 | `SchemaVersion` | must match the engine's supported version |
 | `ProjectName` / `ProjectPath` | TIA project name and output folder (relative to repo) |
+| `ProjectDescription` | free-text description of the system |
+| `ProjectDescription` | free-text description of the system |
 | `PlcName` / `CpuMLFB` / `CpuFW` | CPU device name, order number, firmware (`V2.9`) |
 | `CpuLocalZone` | zone whose modules plug on the CPU's own rack (blank = all remote) |
 | `SubnetName` / `IoSystemName` | PROFINET subnet and IO-system names |
@@ -88,13 +90,25 @@ Unknown keys are a warning, not an error, so the sheet can carry project notes.
 
 ### Design - plant and hardware
 
-**`20_Zones`** - one row per zone/area.
+**`20_Stations`** - one row per ET200SP station on the PROFINET IO system.
 
-`Zone, Name, Description, Station, StationLabel, IM_MLFB, IM_FW, IOSystem, Verified, Notes`
+`Zone, Name, Description, Station, StationLabel, IM_MLFB, IM_FW, IOSystem, IpAddress, SubnetMask, DeviceNumber, DeviceName, Verified, Notes`
 
-- `Zone` - short code, primary key (`BTA`, `MCR`, `FE01`).
+- `Zone` - short code, primary key (`BTA`, `MCR`, `FE01`). It stays the key because it is
+  the natural link from the hardware description to the logic tabs.
 - `Station` - TIA station name (`IOD_BTA`); `StationLabel` - the as-built rack label.
 - `IM_MLFB`/`IM_FW` - head module; blank when the zone is the CPU's own rack.
+- `IpAddress`/`SubnetMask` - pinned PROFINET addressing. **Blank means "let TIA assign"**,
+  which is the previous behaviour; a value is applied to the interface node.
+- `DeviceNumber` - PROFINET device number, unique on the IO system.
+- `DeviceName` - PROFINET device name, used at commissioning. Setting it switches
+  auto-generation off first, or TIA regenerates it from the station name.
+- `IpAddress`, `DeviceNumber` and `Station` must each be unique across the tab; a
+  duplicate is a network fault the compiler will not catch.
+
+> Named `20_Stations`, **not** a "Devices" tab: `22_Devices` already means field devices
+> (crash-off buttons, gates, detectors). Two tabs both called Device would give `DeviceID`
+> and `DeviceRef` two different meanings in a safety review.
 
 **`21_Modules`** - one row per plugged module.
 
@@ -181,7 +195,7 @@ Structural:
 3. Integer columns parse as integers.
 
 Referential:
-4. `23_Channels.DeviceID` -> `22_Devices.DeviceID`; `22_Devices.Zone` -> `20_Zones.Zone`;
+4. `23_Channels.DeviceID` -> `22_Devices.DeviceID`; `22_Devices.Zone` -> `20_Stations.Zone`;
    `23_Channels.ModuleName` -> `21_Modules.ModuleName` within the same zone.
 5. `22_Devices.UDT` -> `30_UDTs.UDT`; nested UDT datatypes resolve.
 6. `33_SafetyBlocks.DeviceID`+`Component` -> an existing `23_Channels` component group.
@@ -199,6 +213,15 @@ Safety:
 
 Exit code is non-zero on any error. Warnings do not fail the build but are printed.
 
+## Schema history
+
+- **v1.2** - `20_Stations` renamed `20_Stations` and given `IpAddress`, `SubnetMask`,
+  `DeviceNumber`, `DeviceName`; `10_Project` gains `ProjectDescription`.
+- **v1.1** - `23_Channels` lost `DesignSlot`/`DesignChannel` (one wiring truth);
+  `21_Modules` gained the F-parameters; `31_Policy` added; `33_SafetyBlocks` became an
+  override tab.
+- **v1.0** - initial schema.
+
 ## Versioning
 
 `00_README` carries `SchemaVersion`, mirrored in `design/sheet.json`.
@@ -215,7 +238,7 @@ or changing an enum is a major bump and requires a `01_Revisions` entry.
   "schemaVersion": "1.0",
   "sheetId": "<google sheet id>",
   "transport": "published-csv",
-  "tabs": { "20_Zones": "0", "21_Modules": "123456", "...": "..." }
+  "tabs": { "20_Stations": "0", "21_Modules": "123456", "...": "..." }
 }
 ```
 

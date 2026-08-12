@@ -70,9 +70,9 @@ function Get-TiaSheetBlockNumber {
     $base = 500; $step = 10
     if ($Model.Project['BlockNumberBase']) { $base = [int]$Model.Project['BlockNumberBase'] }
     if ($Model.Project['BlockNumberStep']) { $step = [int]$Model.Project['BlockNumberStep'] }
-    $zones = @($Model.Zones | ForEach-Object { $_.Zone })
+    $zones = @($Model.Stations | ForEach-Object { $_.Zone })
     $i = [array]::IndexOf($zones, $Zone)
-    if ($i -lt 0) { throw "Zone '$Zone' is not in 20_Zones." }
+    if ($i -lt 0) { throw "Zone '$Zone' is not in 20_Stations." }
     $offset = @{ 'Data' = 0; 'IOMap' = 1; 'Certified' = 2; 'Safety' = 3 }[$Layer]
     if ($null -eq $offset) { $offset = 4 }
     $base + ($i * $step) + $offset
@@ -249,7 +249,7 @@ function Invoke-TiaSheetIOMapPhase {
     if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
 
     $built = @(); $nets = 0
-    foreach ($z in $Model.Zones) {
+    foreach ($z in $Model.Stations) {
         $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
         if (-not $rows.Count) { continue }
         $units = @(); $id = 3
@@ -389,7 +389,7 @@ function Invoke-TiaSheetCertifiedPhase {
     if (-not $fbPattern) { $fbPattern = 'FB_{Zone}_{Layer}' }
 
     $built = @()
-    foreach ($z in $Model.Zones) {
+    foreach ($z in $Model.Stations) {
         $rows = @($plan | Where-Object { $_.Zone -eq $z.Zone })
         if (-not $rows.Count) { continue }
         $units = @(); $statics = @(); $id = 3
@@ -485,7 +485,7 @@ function Invoke-TiaSheetSafetyPhase {
     if (-not $dbPattern) { $dbPattern = 'DB_{Zone}' }
 
     $built = @(); $skippedZones = @()
-    foreach ($z in $Model.Zones) {
+    foreach ($z in $Model.Stations) {
         $db = Expand-TiaSheetPattern -Pattern $dbPattern -Values @{ Zone = $z.Zone }
         $units = @(); $id = 3
 
@@ -596,7 +596,7 @@ function Invoke-TiaSheetDataPhase {
     $udtNames = @($Model.Udts | ForEach-Object { $_.UDT } | Select-Object -Unique)
 
     $plan = @()
-    foreach ($z in $Model.Zones) {
+    foreach ($z in $Model.Stations) {
         $devs = @($Model.DevicesByZone[$z.Zone])
         if (-not $devs.Count) { Write-Host "  $($z.Zone): no devices - skipped"; continue }
         $members = @()
