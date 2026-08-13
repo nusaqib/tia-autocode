@@ -118,6 +118,14 @@ Openness limits here, all discovered live - do not re-spike:
   silently. They must be declared in the sheet to match the BaseUnit DIP switches.
 - **An IO device inherits `SubnetMask` from its IO controller** (`set_SubnetMask is not
   supported`). Report it as inherited, not as a failure.
+- **A simulated F-CPU has no PROFIsafe I/O.** PLCSIM/PLCSIM Advanced never connect an
+  F-module, so all of them passivate and the input image is substituted with 0 - under
+  `1 = OK` everything reads fault. Testing the logic needs safety mode deactivated AND the
+  IOMap layer not running (it rewrites the DB members every scan), in a throwaway copy.
+  See `docs/GUIDE.md` 11.6.
+- **A TIA project committed to git needs `.gitattributes` with `* -text`.** Otherwise git
+  treats `.ap19`/`.info` as text, normalises CRLF, and stores a blob that is not the file
+  that was saved - while `git status` reads clean.
 
 ## Skills (in `.claude/skills/`)
 

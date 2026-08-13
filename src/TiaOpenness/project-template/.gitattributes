@@ -1,0 +1,31 @@
+# TIA Portal artefacts are BINARY. Without this git treats .ap19/.plf/.idx/.zap as text
+# and normalises CRLF on commit, so the stored blob is not the file that was saved - and
+# "git status" reads clean because it compares the normalised form. A clone then gets a
+# project TIA may refuse to open. This has bitten a real project; do not remove it.
+*.ap1[0-9]  binary
+*.ap2[0-9]  binary
+*.apc       binary
+*.zap1[0-9] binary
+*.zap2[0-9] binary
+*.plf       binary
+*.idx       binary
+*.pma*      binary
+*.db        binary
+*.xlsx      binary
+*.pdf       binary
+
+# If you commit a whole TIA project folder, prefer turning EOL conversion off for
+# everything instead and re-listing the text files:
+#     * -text
+#     *.md text eol=lf
+
+# Text that should diff normally, with stable endings
+*.md    text eol=lf
+*.csv   text eol=lf
+*.scl   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.psd1  text eol=crlf

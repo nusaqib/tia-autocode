@@ -11,7 +11,7 @@ function New-TiaProjectRepo {
         Scaffolds a new private project repo from the engine's project-template.
     .DESCRIPTION
         Copies the project-template skeleton (manifest, data CSVs, logic, build/validate
-        scripts, offline-validation CI workflow, .gitignore, README) into -Path and
+        scripts, offline-validation CI workflow, .gitignore, .gitattributes, README) into -Path and
         replaces the {{MachineName}} token with -Name. Does not run git; the returned
         NextSteps list the submodule commands. Purely offline.
     .PARAMETER Path
@@ -46,9 +46,9 @@ function New-TiaProjectRepo {
         }
 
         # Token-replace {{MachineName}} in text files that contain it.
-        $textExt = '.md','.yaml','.yml','.ps1','.csv','.scl','.gitignore'
+        $textExt = '.md','.yaml','.yml','.ps1','.csv','.scl','.gitignore','.gitattributes'
         Get-ChildItem -LiteralPath $Path -Recurse -File -Force | Where-Object {
-            $textExt -contains $_.Extension -or $_.Name -eq '.gitignore'
+            $textExt -contains $_.Extension -or $_.Name -eq '.gitignore' -or $_.Name -eq '.gitattributes'
         } | ForEach-Object {
             $c = Get-Content -LiteralPath $_.FullName -Raw
             if ($c -match '\{\{MachineName\}\}') {

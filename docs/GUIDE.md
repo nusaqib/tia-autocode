@@ -337,6 +337,41 @@ Invoke-TiaDownload -Plc $plc             # confirm; requires an online connectio
 
 ---
 
+## 11.6 Simulating a SAFETY CPU (PLCSIM / PLCSIM Advanced)
+
+An F-CPU simulates, but **PROFIsafe F-I/O does not**. No F-module ever establishes a
+connection, so the F-system passivates every one of them and substitutes **0** into the
+input process image. Under the usual fail-safe convention (`1 = OK`) that means every
+channel reads *fault*, nothing ever goes permissive, and `ACK_REI` cannot help - there is
+no module to reintegrate to.
+
+Three things block a simulated test, and they stack:
+
+| Blocker | What you see | Handling |
+|---|---|---|
+| Safety mode is active | modifying any F-data is refused | Safety Administration -> **Deactivate safety mode** (online, needs the safety password). It is a CPU runtime state, so it does not travel with the project. |
+| F-I/O passivated | `%I` of an F-module is held at 0 and cannot be modified | unavoidable - drive the DB members instead of the inputs |
+| the IOMap layer | a modified DB member reverts within one cycle | it copies tags -> members every scan; stop it running (below) |
+
+The working recipe, in a **throwaway copy**:
+
+1. Remove the IOMap block's call from the safety runtime FB (it calls
+   IOMap -> Certified -> Safety; drop the first). The certified and interlock blocks stay
+   untouched, so what you test is the real logic.
+2. Download, deactivate safety mode.
+3. Modify `<DB>.<Area>.<Device>.<Component>.ChA` / `.ChB` from a watch table and watch
+   `Interlocks_OK`, `Area_Safe`, `System_Safe`.
+
+> **That build must never leave the bench.** With no IOMap call, nothing writes ChA/ChB,
+> so every device reads whatever is left in the DB - the "member nothing writes" hazard,
+> which looks like working logic. Keep it in a disposable folder and do not commit it.
+
+Simulation validates program logic only. F-signatures, PROFIsafe addressing, sensor
+evaluation, discrepancy times and field wiring are not exercised by it and cannot be
+signed off from it.
+
+---
+
 ## 11.5 Sheet-driven safety builds (Phase 7)
 
 For a safety system, a manifest is the wrong authoring surface: every safety-relevant fact
@@ -391,6 +426,10 @@ The schema contract - every tab, column, enum, and validation rule - is
 | `... cannot be accessed. It has already been opened by user ...` | A TIA GUI window holds the project, or a headless run just exited - a project stays locked for ~2 minutes afterwards. |
 | `'set_SubnetMask' is not supported by type ... Node` | Expected: an IO **device** inherits its mask from the IO controller. Set it on the controller. |
 | Every F-module sits at F-destination address 65534 | Expected: TIA only auto-assigns F-destination addresses through the GUI. Declare them in the design (they must match the BaseUnit DIP switches) - the compiler will **not** flag the collision. |
+| `The interface of the standard OB is smaller than the minimum value of 20 bytes` | An OB1 written from SCL with no `VAR_TEMP`. A standard OB needs >= 20 bytes of temp interface; declare the usual `Initial_Call`/`Remanence` plus filler, or import a known-good OB1. |
+| `ShouldProcess ... Object reference not set to an instance of an object` | A confirm prompt in a non-interactive host, not an Openness fault. Pass `-Confirm:$false`, or use the API (`$block.Block.Delete()`). Fixed for `Remove-TiaBlock`. |
+| `Inputs or outputs are used that do not exist in the configured hardware` | The tags address I/O the CPU does not own - usually IO devices still bound to a **deleted** controller's IO system. Recreate the subnet + IO system on the CPU and reconnect each station (`ConnectToSubnet` + `ConnectToIoSystem`). |
+| A saved TIA project shows no change in `git status` | The repo has no `.gitattributes`, so git treated `.ap19`/`.info` as **text** and normalised CRLF - the stored blob is not the file you saved, and status compares the normalised form. Add `* -text` and `git add --renormalize -A`. Committing a TIA project without this silently corrupts it for anyone who clones. |
 
 Run the offline self-test any time to confirm the module itself is healthy:
 

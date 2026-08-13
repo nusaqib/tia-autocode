@@ -21,8 +21,14 @@ function Remove-TiaBlock {
     <#
     .SYNOPSIS
         Deletes a block by name. Use -WhatIf to preview.
+    .DESCRIPTION
+        ConfirmImpact was 'High', which made this prompt by default - and a prompt in a
+        non-interactive host (a build script, a scheduled run) does not fail cleanly: it
+        throws "ShouldProcess ... Object reference not set to an instance of an object",
+        which reads like an Openness fault rather than a missing console. -WhatIf and
+        -Confirm still work; they are now opt-in.
     #>
-    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$Name, $Plc)
     $b = (Get-TiaBlock -Plc $Plc -Name $Name | Select-Object -First 1).Block
     if (-not $b) { throw "Block '$Name' not found." }
