@@ -825,9 +825,31 @@ function Test-TiaDesignSheet {
         if ($designDir -and (Test-Path $designDir)) {
             $wb = @(Get-ChildItem -Path $designDir -Filter '*.xlsx' -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -notlike '~$*' })
+            # A second workbook in design/ (an IO list, a vendor sheet) must not quietly
+            # disable this guard - that would turn "I dropped a file in the folder" into
+            # "the stale-snapshot check stopped running", with no message. Identify the
+            # DESIGN workbook by its schema tabs; only give up if that is still ambiguous.
+            if ($wb.Count -gt 1) {
+                $design = @($wb | Where-Object {
+                    $names = @()
+                    try { $names = Get-TiaXlsxSheetName -Path $_.FullName } catch { }
+                    ($names -contains '10_Project') -and ($names -contains '30_UDTs')
+                })
+                if ($design.Count -eq 1) {
+                    $others = @($wb | Where-Object { $_.FullName -ne $design[0].FullName } |
+                                ForEach-Object { $_.Name })
+                    $warns.Add("$designDir holds $($wb.Count) .xlsx files - using '$($design[0].Name)' as the design workbook (ignoring $($others -join ', ')). Keep non-design workbooks outside design/ so this stays unambiguous.")
+                    $wb = $design
+                } else {
+                    $errors.Add("$designDir holds $($wb.Count) .xlsx files and $($design.Count) of them look like the design workbook, so the STALE SNAPSHOT check could not run. Move the others out of design/, or name the design workbook in sheet.json.")
+                    $wb = @()
+                }
+            }
             if ($wb.Count -eq 1) {
                 try {
-                    $d = Sync-TiaDesignSheet -Path $designDir -DiffOnly -Quiet
+                    # pass the workbook explicitly - Sync's own auto-discovery throws when
+                    # design/ holds more than one .xlsx, which is exactly the case above
+                    $d = Sync-TiaDesignSheet -Path $designDir -Workbook $wb[0].FullName -DiffOnly -Quiet
                     if ($d.Changed -and $d.Changed.Count) {
                         # build the string first - a comma inside Add(...) binds to the
                         # method call, not to -f, and would throw instead of reporting
