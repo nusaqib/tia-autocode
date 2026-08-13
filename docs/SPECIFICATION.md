@@ -102,7 +102,7 @@ src/TiaOpenness/
 | **Logic blocks** | FC/FB/OB from SCL text or `.scl`; SimaticML XML import; export | `Import-TiaScl`, `New-TiaOb`, `Import-TiaBlockXml`, `Export-TiaBlock`, `Get-TiaBlock` | ✅ validated (imported FC+FB; read blocks) |
 | **Compile** | Compile a block or whole PLC; structured result | `Invoke-TiaCompile` | ✅ validated (0 errors / 0 warnings) |
 | **Organization** | Nested block folders; delete blocks | `New-/Get-TiaBlockGroup`, `Remove-TiaBlock` | ☑ implemented |
-| **HMI** | Create panels; discover HMI software; introspect API; screens/tag-tables/alarms XML round-trip; tags + connections | `New-TiaHmiDevice`, `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ◐ panel creation validated live (KTP700 Comfort); screen/tag/alarm XML wrappers offline-tested |
+| **HMI** | Create panels; discover HMI software; introspect API; author Unified screens from objects; Comfort screens/tag-tables/alarms XML round-trip; tags + connections | `New-TiaHmiDevice`, `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `New-TiaScreen`, `New-TiaScreenItem`, `Set-TiaScreenItemTag`, `Export-/Import-TiaScreen`, `Get-TiaHmiConnection`, `Get-/New-TiaHmiTag`, `Export-/Import-TiaHmiTagTable`, `Export-/Import-TiaHmiAlarms` | ◐ panel creation validated live (KTP700 Comfort); Unified screen authoring validated live (Unified Comfort Panel `6AV2 128-3QB06`); Comfort screen/tag/alarm XML wrappers offline-tested |
 | **Lifecycle** | Export whole program to XML; online state; guarded download | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` | ☑ implemented (download needs online CPU/PLCSIM) |
 | **Generator** | Build a full program from a JSON spec | `Invoke-TiaBuildFromSpec` | ☑ implemented (composes validated cmdlets) |
 | **Authoring (Phase 4)** | XLSX workbook import; naming-convention lint; reusable SCL/UDT templates | `Import-TiaXlsx`, `Test-TiaNaming`, `Get-/Expand-TiaTemplate` | ✅ offline-tested; xlsx-build + template-build validated live (compile 0 errors) |
@@ -178,8 +178,23 @@ Common conventions:
 ### 5.8 HMI (see the `tia-hmi` skill)
 - **`Get-TiaHmi [-Name]`** → HMI software: `{Name, Device, SoftwareType, HmiSoftware}`.
 - **`Show-TiaHmiApi [-Hmi]`** → reflection dump of the HMI object's properties/collections.
-- **`Get-TiaScreen [-Name] [-Hmi]`** → screens (recursive).
-- **`Export-TiaScreen -Name -Path [-Overwrite] [-Hmi]`** / **`Import-TiaScreen -Path [-Overwrite] [-Hmi]`**.
+- **`Get-TiaScreen [-Name] [-Hmi]`** → screens `{Name, Folder, Flavor, Screen}`. Recurses
+  `ScreenFolder` on Comfort/Advanced; reads the flat `Screens` composition on Unified.
+- **`Export-TiaScreen -Name -Path [-Overwrite] [-Hmi]`** / **`Import-TiaScreen -Path [-Overwrite] [-Hmi]`**
+  → screen XML. **Comfort/Advanced only**; on Unified they refuse with a message naming
+  the flavor, because `HmiScreen` there has no `Export()`/`Import()`.
+- **`New-TiaScreen -Name [-Width] [-Height] [-Hmi]`** → creates a screen
+  (`Screens.Create`). **Unified only**; on flavors without a `Create(string)` it points at
+  `Import-TiaScreen`. Idempotent: an existing screen is reused and the requested geometry
+  re-applied.
+- **`New-TiaScreenItem -Screen -Name -Type [-Left] [-Top] [-Width] [-Height] [-Hmi]`**
+  → adds a widget/shape/control to a **Unified** screen via the generic
+  `ScreenItems.Create<T>(name)` (invoked through `MakeGenericMethod`). `-Type` resolves
+  with or without the `Hmi` prefix across the `UI.Widgets`, `UI.Shapes` and `UI.Controls`
+  namespaces; an unknown name throws and lists the valid ones. Idempotent, and a name
+  collision with a different widget type is an error rather than a silent swap.
+- **`Set-TiaScreenItemTag -Screen -Item -Property -Tag [-Hmi]`** → binds a Unified screen-
+  item property to an HMI tag by creating (or reusing) a `TagDynamization` on it.
 - **`New-TiaHmiDevice -OrderNumber -Name [-DeviceItemName]`** → adds a WinCC panel from
   a catalog order number (CreateWithItem). Live-validated: KTP700 Comfort
   `OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0`. Returns the `Get-TiaHmi` wrapper.

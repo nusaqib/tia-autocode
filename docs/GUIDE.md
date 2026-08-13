@@ -228,7 +228,12 @@ Get-TiaHmi
 Show-TiaHmiApi -Hmi HMI_1          # reveals ScreenFolder, TagFolder, Connections, ...
 ```
 
-Screens are authored via XML round-trip:
+**Check `SoftwareType` before scripting screens.** A *Unified Comfort Panel*
+(`6AV2 128-*`) reports `HmiUnified.HmiSoftware` and is a different object model from a
+classic Comfort panel (`Hmi.HmiTarget`) despite the similar name. `Get-TiaScreen` reports
+which one you have in its `Flavor` column.
+
+On **Comfort/Advanced**, screens are authored via XML round-trip:
 
 ```powershell
 Get-TiaScreen    -Hmi HMI_1
@@ -236,6 +241,20 @@ Export-TiaScreen -Hmi HMI_1 -Name Start -Path .\Start.xml   # template / backup
 # edit Start.xml ...
 Import-TiaScreen -Hmi HMI_1 -Path .\Start.xml -Overwrite
 ```
+
+On **Unified** there is no screen XML at all (`HmiScreen` exposes only `Delete()`), but
+the object model is richer — build the screen directly (validated live on V19):
+
+```powershell
+New-TiaScreen -Name Overview -Width 1920 -Height 1080
+New-TiaScreenItem -Screen Overview -Name Gate_BTA -Type Button `
+                  -Left 40 -Top 40 -Width 160 -Height 60
+Set-TiaScreenItemTag -Screen Overview -Item Gate_BTA -Property ProcessValue -Tag BTA_Gate_OK
+```
+
+All three are idempotent, so re-running a generator converges. `Export-/Import-TiaScreen`
+refuse on Unified with a message naming the flavor rather than failing on the missing
+`ScreenFolder`. See section 11.7 for the two API traps this hides.
 
 Tags and connections (discovery-first wrappers):
 
@@ -406,6 +425,46 @@ blob, so `git diff` on it says nothing, and for a safety design the per-cell cha
 
 The schema contract - every tab, column, enum, and validation rule - is
 [DESIGN-SHEET.md](DESIGN-SHEET.md).
+
+---
+
+## 11.7 WinCC Unified screens: what Openness does and does not give you
+
+All verified live on V19 against a `6AV2 128-3QB06-0AXx` Unified Comfort Panel. Do not
+re-spike these.
+
+- **A Unified Comfort Panel is not a Comfort panel.** It reports
+  `Siemens.Engineering.HmiUnified.HmiSoftware`, not `Siemens.Engineering.Hmi.HmiTarget`.
+  The names are close enough to send you down the wrong path for an hour.
+- **There is no `ScreenFolder` on Unified** - screens hang off `sw.Screens` directly, as a
+  flat `HmiScreenComposition`. Code that reaches for `ScreenFolder` gets a null reference,
+  not a helpful error.
+- **Unified screens have no XML round-trip.** `HmiScreen` exposes exactly one relevant
+  method - `Delete()`. There is no `Export()`/`Import()`. Screen XML is a
+  Comfort/Advanced-only concept, so the usual "export a template, edit it, re-import" plan
+  simply does not exist here.
+- **In exchange, everything is directly creatable**: `Screens.Create(name)`,
+  `ScreenItems.Create<T>(name)`, `Dynamizations.Create<T>(propertyName)`, and every
+  property (position, size, colour, font, `IOFieldType`, `Visible`, ...) is a settable
+  CLR property. Unified is the *easier* flavor to generate, not the harder one.
+- **Those `Create` methods are generic**, and Windows PowerShell 5.1 has no syntax for
+  calling a generic method. They must be invoked via `MakeGenericMethod` - the same
+  constraint that applies to `GetService<T>`.
+- **Signed/unsigned is inconsistent within one object.** A screen item's `Left`/`Top` are
+  `Int32` while `Width`/`Height` are `UInt32`. Passing a PowerShell `[int]` to
+  `PropertyInfo.SetValue` throws *"Object of type 'System.Int32' cannot be converted to
+  type 'System.UInt32'"*. Always `[Convert]::ChangeType($v, $p.PropertyType)` first.
+- **Widget types span three namespaces** under `Siemens.Engineering.HmiUnified.UI` -
+  `.Widgets` (Button, IOField, Label, Gauge, Bar, Slider, ToggleSwitch, ...), `.Shapes`
+  (Rectangle, Circle, Line, Polygon, Text, GraphicView, ...) and `.Controls`
+  (AlarmControl, TrendControl, FaceplateContainer, ...). Resolve by type name across all
+  of them rather than assuming one namespace.
+- **Git: do not ignore `IM/HMI/`.** On a Unified panel it holds mirrored `Context`/`Saved`
+  trees (zips, RDF stores, fonts - about 12 MB) that *look* like staging, but nothing
+  proves they regenerate, and the failure mode is a clone that opens with HMI content
+  missing while `git status` reads clean. Track it by default. Only `TMP/`, `Logs/`,
+  `XRef/`, `UserFiles/` and `IM/SearchIndex/` are demonstrably regenerated; settle any
+  other candidate with a clean-clone-and-open test rather than by looking at the files.
 
 ---
 

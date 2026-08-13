@@ -87,7 +87,7 @@ To build a project from nothing: `Connect-TiaPortal -New` → `New-TiaProject` �
 | Data types / DBs | `Get-TiaType`, `New-TiaType`, `New-TiaDataBlock` |
 | Blocks | `Get-TiaBlock`, `Import-TiaScl`, `Import-TiaBlockXml`, `Export-TiaBlock`, `New-TiaOb`, `Invoke-TiaCompile` |
 | Block folders | `New-TiaBlockGroup`, `Get-TiaBlockGroup`, `Remove-TiaBlock` |
-| HMI (see tia-hmi skill) | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `Export-TiaScreen`, `Import-TiaScreen` |
+| HMI (see tia-hmi skill) | `Get-TiaHmi`, `Show-TiaHmiApi`, `Get-TiaScreen`, `New-TiaScreen`, `New-TiaScreenItem`, `Set-TiaScreenItemTag`, `Export-TiaScreen`, `Import-TiaScreen` |
 | Lifecycle | `Export-TiaProgram`, `Get-TiaOnlineState`, `Invoke-TiaDownload` |
 | Generator | `Invoke-TiaBuildFromSpec` (declarative JSON → full program) |
 

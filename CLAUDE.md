@@ -58,7 +58,7 @@ declarative generators:
 ## Build / test
 
 ```powershell
-Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 61 cmdlets
+Import-Module .\src\TiaOpenness\TiaOpenness.psd1 -Force   # 64 cmdlets
 .\tests\Test-Module.ps1                                   # offline self-test (no TIA)
 .\scripts\Validate-Full.ps1                               # live attach + scratch write path
 Test-TiaSpec -Path .\examples\example-project\project.yaml
@@ -81,6 +81,19 @@ When CI fails and logs are admin-gated, read `::error::` annotations at
   two phases later.
 - Always `Invoke-TiaCompile` and check `.Errors` before claiming success. `Invoke-TiaCompile`
   returns `.Messages` already flattened to strings; the nested message tree is `.Result.Messages`.
+- **HMI: check `SoftwareType`, not the panel's name.** A *Unified Comfort Panel*
+  (`6AV2 128-*`) is `HmiUnified.HmiSoftware`, not a classic Comfort `Hmi.HmiTarget`. On
+  Unified there is **no `ScreenFolder`** and **no screen XML** (`HmiScreen` has only
+  `Delete()`), so `Export-/Import-TiaScreen` do not apply; screens are built from objects
+  with `New-TiaScreen`/`New-TiaScreenItem`/`Set-TiaScreenItemTag`. Their `Create<T>()` is
+  generic (needs `MakeGenericMethod`), and item `Left`/`Top` are `Int32` while
+  `Width`/`Height` are `UInt32`. Details and the rest of the traps: `docs/GUIDE.md` 11.7.
+- **Do not gitignore `IM/HMI/` in a committed TIA project.** It looks like build output
+  (mirrored `Context`/`Saved` trees of zips, RDF stores and fonts, ~12 MB) but nothing
+  proves it regenerates, and the failure mode is a clone that opens with HMI content
+  missing while `git status` reads clean. Track by default; only `TMP/`, `Logs/`, `XRef/`,
+  `UserFiles/` and `IM/SearchIndex/` are *demonstrably* regenerated. Settle any other
+  candidate with a clean-clone-and-open test, not by inspection.
 
 ## Design-sheet pipeline
 

@@ -1,6 +1,6 @@
 ---
 name: tia-hmi
-description: Program Siemens WinCC HMI (Comfort/Advanced/Unified) via TIA Openness — find HMI devices, enumerate screens, and round-trip screen XML (export/import) to author HMI content. Use for HMI/WinCC/panel/screen/faceplate/HMI-tag tasks in TIA Portal. Assumes the tia-openness skill for connection basics.
+description: Program Siemens WinCC HMI (Comfort/Advanced/Unified) via TIA Openness — find HMI devices, enumerate screens, author Unified screens from objects (New-TiaScreen/New-TiaScreenItem/Set-TiaScreenItemTag) or round-trip Comfort screen XML. Use for HMI/WinCC/panel/screen/faceplate/HMI-tag tasks in TIA Portal. Assumes the tia-openness skill for connection basics.
 ---
 
 # WinCC HMI automation via Openness
@@ -22,9 +22,55 @@ Show-TiaHmiApi -Hmi HMI_1      # reflection dump: ScreenFolder, TagFolder, Conne
 Always run `Show-TiaHmiApi` against the actual HMI first — it tells you exactly which
 properties/collections exist on THIS install, so you script real members, not guesses.
 
-## Screens — the supported authoring path is XML round-trip
+**Read the `SoftwareType`, not the panel's marketing name.** A *Unified Comfort Panel*
+(`6AV2 128-*`) is **not** a classic Comfort panel: it reports
+`Siemens.Engineering.HmiUnified.HmiSoftware` and behaves nothing like
+`Siemens.Engineering.Hmi.HmiTarget`. Getting this wrong sends you down the XML path on a
+device that has no screen XML at all.
 
-Openness does not offer a rich "draw a screen" API. The reliable workflow is:
+| | Classic Comfort/Advanced | **Unified** |
+|---|---|---|
+| Software type | `Hmi.HmiTarget` | `HmiUnified.HmiSoftware` |
+| Screens live in | `sw.ScreenFolder.Screens` (+ nested `.Folders`) | `sw.Screens` (flat, **no `ScreenFolder`**) |
+| Screen XML | `Export()` / `Import()` — the only authoring path | **none** — `HmiScreen` has only `Delete()` |
+| Create a screen | no `Create` — import XML | `Screens.Create(name)` |
+| Create an object | no — edit the XML | `ScreenItems.Create<T>(name)` |
+| Create a tag | no `Create(name)` — XML/master copy | `Create(name)` works |
+
+`Get-TiaScreen` handles both and reports which one you have in its `Flavor` column.
+
+## Screens on Unified — build them from objects
+
+Unified has the richer API: create the screen, create objects on it, set properties,
+bind tags. **Verified live on V19** against a `6AV2 128-3QB06-0AXx` Unified Comfort Panel.
+
+```powershell
+New-TiaScreen -Name Overview -Width 1920 -Height 1080
+New-TiaScreenItem -Screen Overview -Name Gate_BTA -Type Button `
+                  -Left 40 -Top 40 -Width 160 -Height 60
+Set-TiaScreenItemTag -Screen Overview -Item Gate_BTA -Property ProcessValue -Tag BTA_Gate_OK
+```
+
+`-Type` accepts the type name with or without the `Hmi` prefix (`Button`, `HmiIOField`,
+`Rectangle`, `Label`, `Gauge`, `Bar`, `Slider`, `ToggleSwitch`, `Circle`, `Line`, ...);
+an unknown name throws and lists the ones this install has. All three cmdlets are
+**idempotent** — re-running applies the requested geometry to the existing object rather
+than duplicating or silently skipping it, so a generator converges. Re-using a name for a
+*different* widget type is an error, not a silent swap.
+
+Two traps, both hit live:
+
+- **`ScreenItems.Create` and `Dynamizations.Create` are GENERIC** (`Create<T>(string)`),
+  and Windows PowerShell 5.1 has no syntax for calling generic methods. They must go
+  through `MakeGenericMethod` — same constraint as `GetService<T>` in the core skill.
+- **Unified mixes signed and unsigned int properties.** A screen item's `Left`/`Top` are
+  `Int32` but `Width`/`Height` are `UInt32`, so passing a PowerShell `[int]` straight to
+  `SetValue` throws *"Object of type 'System.Int32' cannot be converted to type
+  'System.UInt32'"*. Convert to `PropertyType` first (`Set-HmiProperty` does).
+
+## Screens on Comfort/Advanced — XML round-trip
+
+Classic panels offer no "draw a screen" API, so the reliable workflow is:
 
 ```powershell
 Get-TiaScreen -Hmi HMI_1                                   # enumerate screens
@@ -35,6 +81,9 @@ Import-TiaScreen -Hmi HMI_1 -Path .\Start.xml -Overwrite   # apply
 
 To create a new screen: export an existing one as a template, edit name + content,
 import it. Commit the screen XML to git for versioning and diffing.
+
+On a Unified HMI both cmdlets refuse with a message naming the flavor and pointing at
+`New-TiaScreen`/`New-TiaScreenItem` — they do not null-ref on the missing `ScreenFolder`.
 
 ## Create an HMI panel (device)
 
@@ -116,6 +165,17 @@ referenced screen/alarm/tag-table XML exists.
 > Live HMI is flavor-dependent and these wrappers are reflection-based; validate against
 > a scratch HMI before running them on anything real. Offline `Test-TiaSpec` coverage is
 > in `tests/fixtures/hmi-spec/`.
+
+## Git: do not ignore `IM/HMI/`
+
+When a TIA project folder is committed, `IM/HMI/` **looks** like disposable staging — on a
+Unified panel it is mirrored `Context/` and `Saved/` trees of zips, RDF stores and fonts,
+around 12 MB — but nothing proves it regenerates, and the failure mode is a clone that
+opens with HMI content missing while `git status` reads clean. Track it by default.
+
+Only `TMP/`, `Logs/`, `XRef/`, `UserFiles/` and `IM/SearchIndex/` are demonstrably
+regenerated. Settle any other candidate with a clean-clone-and-open test, not by
+inspecting the file names.
 
 ## Safety
 

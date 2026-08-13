@@ -151,10 +151,15 @@ build:
 | TagTable | no | target HMI tag table (created if missing); default table otherwise |
 
 HMI tags are created with `New-TiaHmiTag` (discovery-first: it locates the tag
-collection for this WinCC flavor and sets the members that exist). Screens, HMI tag
-tables, and alarms also round-trip as **SimaticML XML** via `Export/Import-TiaScreen`,
-`Export/Import-TiaHmiTagTable`, and `Export/Import-TiaHmiAlarms` - the schema-exact path
-for anything the flat CSV cannot express.
+collection for this WinCC flavor and sets the members that exist). HMI tag tables and
+alarms round-trip as **SimaticML XML** via `Export/Import-TiaHmiTagTable` and
+`Export/Import-TiaHmiAlarms` - the schema-exact path for anything the flat CSV cannot
+express.
+
+Screens depend on the flavor. On **Comfort/Advanced** they round-trip as XML
+(`Export/Import-TiaScreen`). On **Unified** there is no screen XML at all, but the object
+model is directly creatable, so screens are generated with `New-TiaScreen`,
+`New-TiaScreenItem` and `Set-TiaScreenItemTag`.
 
 Logic (FB/FC/OB) stays as SCL files — code belongs in code, not spreadsheets.
 
