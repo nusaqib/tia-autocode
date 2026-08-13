@@ -166,7 +166,9 @@ Keep the project-relevant subset, each with a link to engine `docs/SAFETY-LAD-SP
 `docs/openness-cheatsheet.md`:
 
 - Windows PowerShell 5.1 only; Openness group membership + logoff/on.
-- Openness cannot (V19): set F-DI 1oo2 firmware sensor evaluation, import `T#..` Time
+- Openness cannot (V19): set F-DI sensor evaluation through an attribute (no such
+  attribute exists; it is readable as a parameter signature and changeable by replacing the
+  module with a `PlugCopy` of a configured one), import `T#..` Time
   literals as FlgNet LiteralConstants, export `FOB_RTG1`, export inconsistent blocks,
   export blocks without a STEP 7 Professional license seat (UDT export needs none),
   create *standalone* F-instance DBs (moot with multi-instance architecture).

@@ -113,7 +113,9 @@ Traps worth knowing before you touch a design (all cost a live build to discover
 - **Never wire a pin to a member nothing writes.** It reads as connected and behaves as a
   constant. Outputs are wired only when the resolved UDT declares the landing member.
 - `IsFailsafeCompliant` and `ProgrammingLanguage=F_DB` are **XML-only**, never SCL.
-- Openness does not expose F-DI sensor evaluation, never auto-assigns F-destination
+- Openness exposes no F-DI sensor-evaluation attribute (it is readable as a parameter
+  signature and changeable only by `PlugCopy`-ing a configured module - see engine
+  `CLAUDE.md`), never auto-assigns F-destination
   addresses (all default to 65534 and the compiler stays silent), and cannot set
   `SubnetMask` on an IO device (it is inherited from the controller).
 

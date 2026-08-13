@@ -90,10 +90,29 @@ When CI fails and logs are admin-gated, read `::error::` annotations at
 the safety change record; the workbook is a binary blob and diffs to nothing. A phase
 refuses to run on a stale snapshot, and `-Force` does not override that.
 
-Three things Openness cannot do here, all discovered live - do not re-spike:
+Openness limits here, all discovered live - do not re-spike:
 
-- **F-DI sensor evaluation (1oo1/1oo2) is not exposed.** 37 `Failsafe_*` attributes, none
-  of them evaluation. Hence 1oo1 in hardware and 1oo2 in software via `EV1oo2DI`.
+- **F-DI sensor evaluation (1oo1/1oo2) has no attribute - but it CAN still be changed.**
+  Verified across all 42 F-DI: 1oo1 and 1oo2 modules expose an *identical* 57-attribute
+  set, no `Discrepancy*`/`*Evaluation*` attribute exists, ~90 candidate names return
+  nothing from a direct `GetAttribute`, and `GetService<GsdDeviceItem>`/`<AddressController>`
+  are both null. Two things follow:
+  - **It is READABLE** as `Failsafe_FParameterSignatureWithoutAddresses`, a
+    per-configuration fingerprint. For `6ES7 136-6BA01-0CA0`: `19180` = 1oo2, `40925` = 1oo1.
+    (`Failsafe_FParameterSignatureIndividualParameters` also moves but varies per module -
+    use the WithoutAddresses one.)
+  - **It is SETTABLE BY REPLACEMENT**: configure ONE module by hand in the GUI, then
+    `rack.PlugCopy($source, $slot)` over every other module of the SAME order number. The
+    copy carries the channel parameterisation. Proven on 36 modules; compiles 0 errors.
+
+  Three hazards, all hit live - handle them or the change is silently wrong:
+  - `PlugCopy` does **not** carry `Failsafe_FDestinationAddress`; TIA assigns a fresh one.
+    Read it before, write it back after.
+  - Delete-then-replug can **reassign input addresses** (12 of 34 jumped to the top of the
+    address space). `Address.StartAddress` on the module's *head sub-item* is writable -
+    capture every base before, restore and re-check for overlaps after.
+  - **Never copy across order numbers** - it silently changes the part number. Match on
+    `OrderNumber` and verify it again afterwards.
 - **F-destination addresses are never auto-assigned through Openness.** Every F-module
   keeps the catalogue default (65534) and the compiler does not object - they collide
   silently. They must be declared in the sheet to match the BaseUnit DIP switches.

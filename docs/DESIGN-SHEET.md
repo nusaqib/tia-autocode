@@ -197,12 +197,16 @@ two devices onto one certified instance.
   setting it switches `Failsafe_ManualAssignmentFMonitoringtime` on first, because the
   attribute is read-only while it is derived.
 
-> **Sensor evaluation is NOT a column** (removed in v1.5). Openness exposes no
-> sensor-evaluation parameter at all - an F-DI has 37 `Failsafe_*` attributes and none of
-> them is evaluation - so the build can neither set it nor read it back to check. It is a
-> manual TIA step with no automated verification. The project-wide decision (1oo1 in
-> hardware, 1oo2 in software via `EV1oo2DI`) is recorded once in `02_Decisions` D01; a
-> per-module column implied a check that never ran.
+> **Sensor evaluation is NOT a column** (removed in v1.5). It has no Openness attribute -
+> an F-DI exposes an identical attribute set whether it is 1oo1 or 1oo2, and no name in it
+> is evaluation. But it is **readable** as a fingerprint
+> (`Failsafe_FParameterSignatureWithoutAddresses`; for `6ES7 136-6BA01-0CA0` `19180` = 1oo2,
+> `40925` = 1oo1) and **settable by replacement** - configure one module in the GUI, then
+> `PlugCopy` it over every other module of the same order number. See the engine `CLAUDE.md`
+> for the three hazards (F-dest is not copied, addresses can be reassigned, never copy
+> across part numbers). It stays out of the sheet because the sheet describes the design,
+> not the procedure; the project-wide decision (1oo1 in hardware, 1oo2 in software via
+> `EV1oo2DI`) is recorded once in `02_Decisions` D01.
 
 > **There is no devices tab (removed in v1.8).** A device *is* a member of its area's UDT,
 > so it is declared in `30_UDTs` as a row of `UDT_Area_<Area>` - the member name is the

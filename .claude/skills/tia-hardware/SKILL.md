@@ -66,9 +66,47 @@ plcs:
 `Invoke-TiaBuildFromSpec` adds the CPU, then plugs each module. Validate first with
 `Test-TiaSpec` (checks slots are unique integers and order numbers/names present).
 
+## Changing a module parameter that has no attribute (e.g. F-DI 1oo1/1oo2)
+
+Some catalogue-module settings are simply not in the attribute API - an F-DI's sensor
+evaluation is one: a 1oo1 and a 1oo2 module expose an **identical** attribute set, no name
+matches `Discrepancy|Evaluation`, direct `GetAttribute` on candidate names returns nothing,
+and `GetService<GsdDeviceItem>`/`<AddressController>` are null. They can still be read and
+written, indirectly:
+
+- **Read** the configuration as a fingerprint:
+  `head.GetAttribute('Failsafe_FParameterSignatureWithoutAddresses')`. It is stable per
+  configuration and per order number (for `6ES7 136-6BA01-0CA0`: `19180` = 1oo2,
+  `40925` = 1oo1). Use the `WithoutAddresses` signature -
+  `...IndividualParameters` also moves but varies per module.
+- **Write** it by replacement: configure ONE module by hand in the GUI, then
+  `$rack.PlugCopy($configured, $slot)` over each other module of the same order number.
+  The copy carries the channel parameterisation.
+
+```powershell
+$head = @($module.DeviceItems)[0]                # parameters live on the head sub-item
+$fdest = $head.GetAttribute('Failsafe_FDestinationAddress')
+$base  = @($head.Addresses | Where-Object IoType -eq 'Input').StartAddress
+$module.Delete()
+$new = $rack.PlugCopy($configuredSource, $slot)
+$new.SetAttribute('Name', $originalName)
+@($new.DeviceItems)[0].SetAttribute('Failsafe_FDestinationAddress', $fdest)
+```
+
+Three hazards, all seen live on a 36-module conversion:
+
+- `PlugCopy` does **not** carry `Failsafe_FDestinationAddress` - TIA assigns a fresh one.
+- Delete-then-replug can **reassign I/O addresses** (12 of 34 modules jumped to the top of
+  the address space). Capture every base first; `Address.StartAddress` is writable, so
+  restore them and then re-check the whole rack for overlaps.
+- **Never `PlugCopy` across order numbers** - it silently changes the part number. Match on
+  `OrderNumber` and verify it again afterwards.
+
+Verify with a compile and a full address-overlap sweep before saving.
+
 ## Notes
 
 - Do device/module writes in a scratch project or your own `-New` instance, not a
   human's live session.
-- Module addressing (I/O address per module) beyond default is a future extension;
-  for now modules take their default addresses.
+- Module I/O addresses are assigned by TIA, but `Address.StartAddress` on a module's head
+  sub-item **is writable** when you need to pin or restore one.

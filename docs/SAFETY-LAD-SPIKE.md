@@ -11,8 +11,9 @@ SR PPS project (and a future engine capability). Every item below was run end-to
 > `EV1oo2DI V1.3` with `<Instance>` as FIRST Part child + `codedbool_type=DInt`), and
 > **`Main_Safety_RTG1` itself** (multi-instance zone-FB calls). No manual safety-editor
 > step remains for program *structure*. Earlier "cannot" claims about F-DBs, instance
-> binding, and RTG wiring are corrected in place below; still true: no firmware-1oo2
-> parameter, no Time literals in FlgNet, no `FOB_RTG1` export, license + consistency
+> binding, and RTG wiring are corrected in place below; the firmware-1oo2 "cannot" is also
+> corrected - there is no attribute, but the setting is readable as a parameter signature
+> and changeable via `PlugCopy`. Still true: no Time literals in FlgNet, no `FOB_RTG1` export, license + consistency
 > gates on block export. Canonical templates: `PPS_SR_LAB/logic/exported/`.
 
 ## Summary - what works
@@ -25,7 +26,7 @@ SR PPS project (and a future engine capability). Every item below was run end-to
 | Create **ET200SP** PROFINET station (IM) via Openness | ✅ `6ES7155-6AU01-0CN0/V4.2` |
 | Plug **F-DI/F-DQ/F-RQ/DQ/DI** onto the ET200SP `Rack_0` | ✅ 14/14 BTA modules |
 | Assign the station to the CPU's **PROFINET IO system** + compile | ✅ addresses + unique F-dest assigned |
-| Set F-DI **1oo2 sensor-evaluation** from code | ❌ not exposed in V19 Openness -> do 1oo2 in software (see below) |
+| Set F-DI **sensor-evaluation (1oo1/1oo2)** from code | ⚠ no attribute exists, but it is **readable** as `Failsafe_FParameterSignatureWithoutAddresses` and **settable by replacement** - configure one module in the GUI, then `PlugCopy` it over the others of the same order number (proven on 36 modules). Hazards: F-dest is not copied, addresses can be reassigned, never copy across part numbers. |
 | Read/write other F-DI `Failsafe_*` params (monitoring time, F-addrs, SC-test) | ✅ on the channel sub-item |
 
 **Conclusion:** generating a distributed F-system in LAD via Openness is feasible. No
