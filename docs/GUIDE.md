@@ -484,7 +484,25 @@ re-spike these.
   So on V19 a faceplate must be drawn once in the TIA GUI. On V21 `ExportAsDocuments` +
   `CreateFromDocuments` is a full round-trip, which makes faceplate types generatable and
   diffable like any other document set. `HmiFaceplateContainer` placement and interface
-  binding is scriptable on both.
+  binding is scriptable on both; a fresh container reads `ContainedType=''` and
+  `Interface.Count=0` until it is pointed at a type.
+
+  **Either version still needs a hand-made seed.** `CreateFromDocuments` needs documents,
+  and no faceplate schema ships in `Portal V21\Schema` (it holds only IdentManager and
+  consistency-message XSDs), so the first faceplate is drawn in the GUI regardless. V21
+  then lets you export it, template it, and generate the rest. There is also no
+  screen-to-faceplate shortcut: `IMasterCopySource` covers classic `Hmi.Screen.Screen` but
+  not Unified screens.
+- **The Unified screen generator ports from V19 to V21 unchanged** - verified live in a
+  V21 scratch project: `Connect-TiaPortal -Version 21.0 -New` loads the modular assemblies,
+  and `New-TiaScreen`, `New-TiaScreenItem` (Rectangle / Text / FaceplateContainer) and the
+  `<body><p>..</p></body>` text form all behave identically. Only the panel image version
+  changes: `6AV2 128-3QB06-0AXx/21.0.0.0` instead of `/19.0.0.0`.
+- **Do not count V21's extra HMI compositions as a benefit until you have used them.**
+  `HmiTextLists`, `HmiGraphicLists` and `HmiSystemTextLists` exist on V21's `HmiSoftware`
+  and do not exist at all on V19 - but on a fresh V21 project all of them read `<null>`,
+  as do `Scripts`, `ScreenGroups` and `PlantObjectTags` (the latter three are null on V19
+  too). Presence of a property is not proof of a working API.
 - **Git: do not ignore `IM/HMI/`.** On a Unified panel it holds mirrored `Context`/`Saved`
   trees (zips, RDF stores, fonts - about 12 MB) that *look* like staging, but nothing
   proves they regenerate, and the failure mode is a clone that opens with HMI content

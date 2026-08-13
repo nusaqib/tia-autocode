@@ -151,8 +151,20 @@ library API changed, and the V19 answer is not the V21 answer.
   V19 assembly exposes faceplate *content* either: `FaceplateLibraryTypeVersion` has no
   `ScreenItems` and no interface collection, so an existing faceplate is opaque too.
 - **On V21** `ExportAsDocuments` + `CreateFromDocuments` is a genuine round-trip, so
-  faceplate types become generatable and reviewable as a document set. Expect to seed the
-  schema by exporting one hand-made faceplate first.
+  faceplate types become generatable and reviewable as a document set.
+
+**Both versions still need one hand-drawn seed.** `CreateFromDocuments` needs documents and
+no faceplate schema ships in `Portal V21\Schema`, so the first faceplate is a GUI job either
+way — V21 just lets you export it and generate every one after that. There is no
+screen-to-faceplate shortcut either: `IMasterCopySource` covers classic `Hmi.Screen.Screen`,
+not Unified screens.
+
+**The screen generator ports V19 -> V21 unchanged** (verified in a V21 scratch project):
+`Connect-TiaPortal -Version 21.0 -New` loads the modular assemblies, and `New-TiaScreen`,
+`New-TiaScreenItem` and the HTML text form behave identically. Only the panel image version
+differs — `6AV2 128-3QB06-0AXx/21.0.0.0`. Note that V21's extra compositions
+(`HmiTextLists`, `HmiGraphicLists`, `Scripts`, `ScreenGroups`, `PlantObjectTags`) all read
+`<null>` on a fresh project, so do not count them as a benefit until you have used them.
 
 Instantiation is scriptable on both versions:
 
