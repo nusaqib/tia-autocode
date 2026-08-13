@@ -136,17 +136,35 @@ import it. Commit the screen XML to git for versioning and diffing.
 On a Unified HMI both cmdlets refuse with a message naming the flavor and pointing at
 `New-TiaScreen`/`New-TiaScreenItem` — they do not null-ref on the missing `ScreenFolder`.
 
-## Faceplates: placeable, not authorable
+## Faceplates: placeable on any version, authorable only from V21
 
-`ProjectLibrary.TypeFolder.Types` exposes only `Find`, `Contains` and enumeration — **no
-`Create`, no `Import`**. So a faceplate *type* cannot be built through Openness; it has to
-be drawn once in the TIA GUI (Libraries -> Project library -> Types -> Add type ->
-Faceplate), where you define its interface properties.
+**Check which Openness version you are bound to before concluding anything here** — the
+library API changed, and the V19 answer is not the V21 answer.
 
-Once the type exists, everything else is scriptable: `HmiFaceplateContainer` creates fine
-via `New-TiaScreenItem -Type FaceplateContainer`, and its `HmiFaceplateInterface` members
-are set like any other property. That splits the work sensibly — a human authors the
-device faceplate once, a generator instantiates it per device from the design sheet.
+| | V19 | V21 |
+|---|---|---|
+| `LibraryTypeComposition` | `Find` / `Contains` / enumerate only | adds **`CreateFromDocuments(DirectoryInfo, String, LibraryImportOptions)`** |
+| `FaceplateLibraryTypeVersion` | `Export`, `Delete`, `FindInstances`, `SetAsDefault` | adds **`ExportAsDocuments(DirectoryInfo, String, String, LibraryExportOptions)`**, `Edit()`, `Discard()` |
+
+- **On V19** a faceplate *type* cannot be created or imported. It has to be drawn once in
+  the GUI (Libraries -> Project library -> Types -> Add type -> Faceplate). Nothing in the
+  V19 assembly exposes faceplate *content* either: `FaceplateLibraryTypeVersion` has no
+  `ScreenItems` and no interface collection, so an existing faceplate is opaque too.
+- **On V21** `ExportAsDocuments` + `CreateFromDocuments` is a genuine round-trip, so
+  faceplate types become generatable and reviewable as a document set. Expect to seed the
+  schema by exporting one hand-made faceplate first.
+
+Instantiation is scriptable on both versions:
+
+```powershell
+$fp = New-TiaScreenItem -Screen BTA -Name SCB_SE0101 -Type FaceplateContainer
+$fp.ContainedType = 'FP_SCB'          # library type this container shows
+$fp.Interface.Find('Device')          # HmiFaceplateInterface: .Value or .Dynamizations
+```
+
+`Interface` is a composition with **`Find` only** — the *type* declares the properties,
+the *instance* binds them. That is the useful split: a human authors the device faceplate,
+a generator stamps one instance per device from the design sheet.
 
 ## Create an HMI panel (device)
 

@@ -88,6 +88,12 @@ When CI fails and logs are admin-gated, read `::error::` annotations at
   with `New-TiaScreen`/`New-TiaScreenItem`/`Set-TiaScreenItemTag`. Their `Create<T>()` is
   generic (needs `MakeGenericMethod`), and item `Left`/`Top` are `Int32` while
   `Width`/`Height` are `UInt32`. Details and the rest of the traps: `docs/GUIDE.md` 11.7.
+- **The Openness surface differs by version - check the assembly, not your memory.** V21 is
+  modular (`Siemens.Engineering.Base/.WinCC/.WinCCUnified.dll`) and adds what V19 lacks:
+  `LibraryTypeComposition.CreateFromDocuments` + `FaceplateLibraryTypeVersion
+  .ExportAsDocuments` (so faceplate types are generatable on V21, not on V19), HMI text and
+  graphic lists, scripts, screen groups, `HmiScreen.Validate()`, and 45 screen-item types
+  against V19's 38. Reflect over the version you are bound to before declaring a limit.
 - **Do not gitignore `IM/HMI/` in a committed TIA project.** It looks like build output
   (mirrored `Context`/`Saved` trees of zips, RDF stores and fonts, ~12 MB) but nothing
   proves it regenerates, and the failure mode is a clone that opens with HMI content

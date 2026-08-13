@@ -473,10 +473,18 @@ re-spike these.
   cannot be assigned; set `.Text.Items[0].Text`, and it must be
   `<body><p>...</p></body>` - a bare string is rejected. `Font` is likewise read-only
   while `Font.Size` / `Font.Weight` are writable.
-- **Faceplate *types* cannot be created through Openness.** `ProjectLibrary.TypeFolder
-  .Types` exposes only `Find`/`Contains`/enumerate - there is no `Create` and no `Import`.
-  A faceplate must be authored once in the TIA GUI; after that `HmiFaceplateContainer` can
-  be placed and parameterised from a script like any other screen item.
+- **Faceplate *types* cannot be created through Openness ON V19 - but they can on V21.**
+  This is version-specific, so check the assembly you are actually bound to:
+
+  | | V19 (`Siemens.Engineering.dll`) | V21 (`Siemens.Engineering.Base.dll`) |
+  |---|---|---|
+  | `LibraryTypeComposition` | `Find`/`Contains`/enumerate only | adds **`CreateFromDocuments(DirectoryInfo, String, LibraryImportOptions)`** |
+  | `FaceplateLibraryTypeVersion` | `Export`, `Delete`, `FindInstances` | adds **`ExportAsDocuments(...)`**, `Edit()`, `Discard()` |
+
+  So on V19 a faceplate must be drawn once in the TIA GUI. On V21 `ExportAsDocuments` +
+  `CreateFromDocuments` is a full round-trip, which makes faceplate types generatable and
+  diffable like any other document set. `HmiFaceplateContainer` placement and interface
+  binding is scriptable on both.
 - **Git: do not ignore `IM/HMI/`.** On a Unified panel it holds mirrored `Context`/`Saved`
   trees (zips, RDF stores, fonts - about 12 MB) that *look* like staging, but nothing
   proves they regenerate, and the failure mode is a clone that opens with HMI content
