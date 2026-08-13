@@ -455,10 +455,28 @@ re-spike these.
   `PropertyInfo.SetValue` throws *"Object of type 'System.Int32' cannot be converted to
   type 'System.UInt32'"*. Always `[Convert]::ChangeType($v, $p.PropertyType)` first.
 - **Widget types span three namespaces** under `Siemens.Engineering.HmiUnified.UI` -
-  `.Widgets` (Button, IOField, Label, Gauge, Bar, Slider, ToggleSwitch, ...), `.Shapes`
+  `.Widgets` (Button, IOField, Gauge, Bar, Slider, ToggleSwitch, ...), `.Shapes`
   (Rectangle, Circle, Line, Polygon, Text, GraphicView, ...) and `.Controls`
   (AlarmControl, TrendControl, FaceplateContainer, ...). Resolve by type name across all
   of them rather than assuming one namespace.
+- **34 of 38 screen-item types are creatable.** Surveyed live by create-then-delete. The
+  four that throw *"Not supported"* are `HmiLabel`, `HmiProcessControl`,
+  `HmiCustomWidgetContainer`, `HmiCustomWebControlContainer`. Use `HmiText` for a static
+  caption - `HmiLabel` looks like the obvious choice and cannot be created.
+- **A raw tag binding assigns the value; to drive a colour you need the MappingTable.**
+  `dyn.ValueConverter.MappingTable` with `ConditionType = Range` and one
+  `MappingTableEntryRange` per value converts a BOOL into a `System.Drawing.Color` (or a
+  `Visible` flag). `Entries.Create<T>()` is generic; `RangeType` is read-only and derived
+  from `From`/`To`; `Value` wants a real `Color`, not a hex string; `Flashing` is per
+  entry. `Set-TiaScreenItemTag -ValueMap @{0=$red;1=$green} -FlashOn 1` wraps all of it.
+- **Static text is read-only HTML.** `HmiText.Text` is a `MultilingualText` whose property
+  cannot be assigned; set `.Text.Items[0].Text`, and it must be
+  `<body><p>...</p></body>` - a bare string is rejected. `Font` is likewise read-only
+  while `Font.Size` / `Font.Weight` are writable.
+- **Faceplate *types* cannot be created through Openness.** `ProjectLibrary.TypeFolder
+  .Types` exposes only `Find`/`Contains`/enumerate - there is no `Create` and no `Import`.
+  A faceplate must be authored once in the TIA GUI; after that `HmiFaceplateContainer` can
+  be placed and parameterised from a script like any other screen item.
 - **Git: do not ignore `IM/HMI/`.** On a Unified panel it holds mirrored `Context`/`Saved`
   trees (zips, RDF stores, fonts - about 12 MB) that *look* like staging, but nothing
   proves they regenerate, and the failure mode is a clone that opens with HMI content

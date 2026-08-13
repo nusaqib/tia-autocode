@@ -347,9 +347,21 @@ function Set-TiaScreenItemTag {
         .Create<T>(propertyName) is generic, so it goes through MakeGenericMethod too. An
         existing dynamization on the same property is reused, not duplicated.
     .PARAMETER Property  Property to dynamize, e.g. ProcessValue, Visible, BackColor.
-    .PARAMETER Tag       HMI tag name to bind to.
+    .PARAMETER Tag       HMI tag name to bind to. Dotted member paths into a UDT tag work:
+                         'DB_SR_PPS_BTA.SCB_SE0101.EMO.Safe'.
+    .PARAMETER ValueMap  Optional value -> result map, applied through the dynamization's
+                         MappingTable. Each key becomes a single-value range (From = To =
+                         key) whose result is the value. This is how a BOOL drives a
+                         colour: -ValueMap @{ 0 = $red; 1 = $green }. Without it the tag
+                         value is used directly (correct for ProcessValue on an IO field).
+    .PARAMETER FlashOn   Values whose mapping entry should flash, e.g. -FlashOn 1.
     .EXAMPLE
         Set-TiaScreenItemTag -Screen HOME -Item Gate_BTA -Property ProcessValue -Tag BTA_Gate_OK
+    .EXAMPLE
+        $red = [System.Drawing.Color]::FromArgb(255,208,56,48)
+        $grn = [System.Drawing.Color]::FromArgb(255,34,160,74)
+        Set-TiaScreenItemTag -Screen BTA -Item Gate_bar -Property BackColor `
+                             -Tag 'DB_SR_PPS_BTA.IntGateA.Safe' -ValueMap @{ 0 = $red; 1 = $grn }
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -357,6 +369,8 @@ function Set-TiaScreenItemTag {
         [Parameter(Mandatory)][string]$Item,
         [Parameter(Mandatory)][string]$Property,
         [Parameter(Mandatory)][string]$Tag,
+        [System.Collections.IDictionary]$ValueMap,
+        [object[]]$FlashOn,
         $Hmi
     )
     $target = if ($Screen -is [string]) {
@@ -382,6 +396,30 @@ function Set-TiaScreenItemTag {
     $p = $dyn.GetType().GetProperty('Tag')
     if (-not $p -or -not $p.CanWrite) { throw "TagDynamization on '$Property' has no writable Tag property." }
     $p.SetValue($dyn, $Tag)
+
+    if ($ValueMap) {
+        # The MappingTable turns a tag value into the property's own type - the only way to
+        # drive a colour (or a Visible flag) from a BOOL. RangeType is read-only and derived
+        # from From/To, so set those and leave it alone. Entries.Create is generic too.
+        $asm = [Siemens.Engineering.HmiUnified.HmiSoftware].Assembly
+        $entryT = $asm.GetType('Siemens.Engineering.HmiUnified.UI.Dynamization.Tag.MappingTableEntryRange')
+        $map = $dyn.ValueConverter.MappingTable
+        $map.ConditionType = [Siemens.Engineering.HmiUnified.UI.Dynamization.Tag.ConditionType]::Range
+        $mkEntry = $map.Entries.GetType().GetMethods() | Where-Object {
+            $_.Name -eq 'Create' -and $_.IsGenericMethodDefinition
+        } | Select-Object -First 1
+        if (-not $mkEntry) { throw "MappingTable entries ($($map.Entries.GetType().Name)) has no generic Create<T>()." }
+        foreach ($key in $ValueMap.Keys) {
+            $entry = $mkEntry.MakeGenericMethod($entryT).Invoke($map.Entries, @())
+            $entry.From  = $key
+            $entry.To    = $key
+            $entry.Value = $ValueMap[$key]
+            # No -and guard here: a single-element array @(0) is FALSY in PowerShell, so
+            # `if ($FlashOn -and ...)` silently ignores -FlashOn 0. -contains on $null is
+            # already false, which is the behaviour the guard was reaching for.
+            if ($FlashOn -contains $key) { $entry.Flashing = $true }
+        }
+    }
     $dyn
 }
 

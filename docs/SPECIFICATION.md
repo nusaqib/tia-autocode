@@ -193,8 +193,12 @@ Common conventions:
   with or without the `Hmi` prefix across the `UI.Widgets`, `UI.Shapes` and `UI.Controls`
   namespaces; an unknown name throws and lists the valid ones. Idempotent, and a name
   collision with a different widget type is an error rather than a silent swap.
-- **`Set-TiaScreenItemTag -Screen -Item -Property -Tag [-Hmi]`** → binds a Unified screen-
-  item property to an HMI tag by creating (or reusing) a `TagDynamization` on it.
+- **`Set-TiaScreenItemTag -Screen -Item -Property -Tag [-ValueMap] [-FlashOn] [-Hmi]`**
+  → binds a Unified screen-item property to an HMI tag by creating (or reusing) a
+  `TagDynamization` on it. `-Tag` accepts a dotted member path into a UDT tag
+  (`DB_SR_PPS_BTA.SCB_SE0101.EMO.Safe`). `-ValueMap @{0=$red;1=$green}` writes the
+  dynamization's `MappingTable` so a BOOL can drive a colour or a `Visible` flag; each key
+  becomes a single-value range. `-FlashOn 1` makes the matching entry flash.
 - **`New-TiaHmiDevice -OrderNumber -Name [-DeviceItemName]`** → adds a WinCC panel from
   a catalog order number (CreateWithItem). Live-validated: KTP700 Comfort
   `OrderNumber:6AV2 124-1GC01-0AX0/17.0.0.0`. Returns the `Get-TiaHmi` wrapper.

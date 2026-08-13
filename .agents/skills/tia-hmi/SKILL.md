@@ -51,12 +51,52 @@ New-TiaScreenItem -Screen Overview -Name Gate_BTA -Type Button `
 Set-TiaScreenItemTag -Screen Overview -Item Gate_BTA -Property ProcessValue -Tag BTA_Gate_OK
 ```
 
-`-Type` accepts the type name with or without the `Hmi` prefix (`Button`, `HmiIOField`,
-`Rectangle`, `Label`, `Gauge`, `Bar`, `Slider`, `ToggleSwitch`, `Circle`, `Line`, ...);
-an unknown name throws and lists the ones this install has. All three cmdlets are
-**idempotent** — re-running applies the requested geometry to the existing object rather
-than duplicating or silently skipping it, so a generator converges. Re-using a name for a
-*different* widget type is an error, not a silent swap.
+`-Type` accepts the type name with or without the `Hmi` prefix; an unknown name throws and
+lists the ones this install has. All three cmdlets are **idempotent** — re-running applies
+the requested geometry to the existing object rather than duplicating or silently skipping
+it, so a generator converges. Re-using a name for a *different* widget type is an error,
+not a silent swap.
+
+**34 of 38 screen-item types are creatable** (surveyed live by create-then-delete on V19):
+all of `.Widgets` (Button, IOField, SymbolicIOField, TextBox, Bar, Gauge, Slider,
+ToggleSwitch, Clock, ListBox, CheckBoxGroup, RadioButtonGroup, TouchArea), all of
+`.Shapes` (Rectangle, Circle, Ellipse, Line, Polygon, Polyline, Text, GraphicView, arcs
+and segments), plus AlarmControl, TrendControl, FunctionTrendControl, MediaControl,
+SystemDiagnosisControl, WebControl, FaceplateContainer, ScreenWindow. The four that throw
+*"Not supported"* are **`HmiLabel`, `HmiProcessControl`, `HmiCustomWidgetContainer`,
+`HmiCustomWebControlContainer`** — for a static caption use `HmiText`, not `HmiLabel`.
+
+### Driving a colour (or any property) from a BOOL
+
+A raw tag binding assigns the value, which is what you want for an IO field's
+`ProcessValue` but useless for `BackColor`. The dynamization's **`MappingTable`** converts
+value to property type — pass `-ValueMap`:
+
+```powershell
+$red = [System.Drawing.Color]::FromArgb(255,208,56,48)
+$grn = [System.Drawing.Color]::FromArgb(255,34,160,74)
+Set-TiaScreenItemTag -Screen BTA -Item SE0101_bar -Property BackColor `
+    -Tag 'DB_SR_PPS_BTA.SCB_SE0101.EMO.Safe' -ValueMap @{ 0 = $red; 1 = $grn }
+# -FlashOn 1 makes the value-1 entry flash (good for "acknowledge required")
+```
+
+The same trick on `Visible` gives real *text* state without a text list: overlay two
+`HmiText` objects on one bar, map one visible at 1 and the other at 0. That keeps meaning
+from depending on colour alone — worth doing on a safety display.
+
+Notes on the mapping API: `MappingTable.Entries.Create<T>()` is generic (reflection
+again); `RangeType` is **read-only**, derived from `From`/`To`; and `Value` takes a real
+`System.Drawing.Color`, not a hex string.
+
+### Static text is HTML, and read-only
+
+`HmiText.Text` is a `MultilingualText` whose property is not writable. Set the item
+instead, and it must be HTML — a bare string is rejected:
+
+```powershell
+$item.Text.Items[0].Text = '<body><p>CRASH-OFF</p></body>'
+$item.Font.Size = 14 ; $item.Font.Weight = 'Bold'   # Font is read-only, its members are not
+```
 
 Two traps, both hit live:
 
@@ -67,6 +107,17 @@ Two traps, both hit live:
   `Int32` but `Width`/`Height` are `UInt32`, so passing a PowerShell `[int]` straight to
   `SetValue` throws *"Object of type 'System.Int32' cannot be converted to type
   'System.UInt32'"*. Convert to `PropertyType` first (`Set-HmiProperty` does).
+
+One PowerShell trap that bites hard when writing screen generators: **variable names are
+case-insensitive, so `$t` and `$T` are the same variable.** A helper written as
+
+```powershell
+function New-Txt { param($Screen, [int]$L, [int]$T, ...)
+    $t = New-TiaScreenItem -Screen $Screen -Left $L -Top $T ...   # <-- $t clobbers $T
+```
+
+fails with *"Cannot convert HmiText to System.Int32"*, pointing at a line where every
+argument looks like an integer. Name the local something else.
 
 ## Screens on Comfort/Advanced — XML round-trip
 
@@ -84,6 +135,18 @@ import it. Commit the screen XML to git for versioning and diffing.
 
 On a Unified HMI both cmdlets refuse with a message naming the flavor and pointing at
 `New-TiaScreen`/`New-TiaScreenItem` — they do not null-ref on the missing `ScreenFolder`.
+
+## Faceplates: placeable, not authorable
+
+`ProjectLibrary.TypeFolder.Types` exposes only `Find`, `Contains` and enumeration — **no
+`Create`, no `Import`**. So a faceplate *type* cannot be built through Openness; it has to
+be drawn once in the TIA GUI (Libraries -> Project library -> Types -> Add type ->
+Faceplate), where you define its interface properties.
+
+Once the type exists, everything else is scriptable: `HmiFaceplateContainer` creates fine
+via `New-TiaScreenItem -Type FaceplateContainer`, and its `HmiFaceplateInterface` members
+are set like any other property. That splits the work sensibly — a human authors the
+device faceplate once, a generator instantiates it per device from the design sheet.
 
 ## Create an HMI panel (device)
 
