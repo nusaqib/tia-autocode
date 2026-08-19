@@ -472,7 +472,41 @@ re-spike these.
 - **Static text is read-only HTML.** `HmiText.Text` is a `MultilingualText` whose property
   cannot be assigned; set `.Text.Items[0].Text`, and it must be
   `<body><p>...</p></body>` - a bare string is rejected. `Font` is likewise read-only
-  while `Font.Size` / `Font.Weight` are writable.
+  while `Font.Size` / `Font.Weight` are writable. **This applies to `HmiButton.Text` too** -
+  a button caption is rich text, and a bare string fails with *"The argument 'text'
+  (CAPTION) has an invalid format."*
+- **HMI tags: `New-TiaHmiTag` does not work on Unified.** It cannot resolve the tag
+  collection and reports the flavor as `Object[]`, then suggests the Comfort/Advanced
+  tag-table XML round trip - which is wrong advice here. Create tags natively:
+  `HmiTagTable.Tags.Create(name)`, which accepts `(name)` or `(name, tagTableName)`.
+- **Do NOT set `HmiTag.DataType`.** Assign `Connection`, then `PlcTag`, and TIA resolves
+  the data type itself - by the time `PlcTag` is set, `DataType` already reads the PLC
+  tag's own type. Assigning `DataType` explicitly throws *"Empty data type or HMI data
+  type at tag ..."* both ways round: before `PlcTag` there is nothing to resolve against,
+  and after it is already correct. On Unified these three are plain `String` properties,
+  unlike Comfort/Advanced where `DataType` is a typed link.
+- **A UDT-typed HMI tag makes the whole PLC structure reachable by path.** One tag of type
+  `"ZoneData"` pointed at `DB_Plant.Zone1` lets any screen item bind to
+  `Zone1_Tag.Motor3.Running`. Four tags instead of several hundred flat ones, and
+  adding a member to the UDT needs no HMI tag work at all.
+- **Screen navigation is a script on an event handler.**
+  `button.EventHandlers.Create(HmiButtonEventType.Tapped)` returns a handler whose
+  `Script` property is **read-only** - set the code on the object it returns:
+  `handler.Script.ScriptCode = "HMIRuntime.UI.SysFct.ChangeScreen('Overview','~');"`.
+  **It is `SysFct`, not `SysFn`**, the verb is `ChangeScreen`, and it takes a second
+  argument - the screen-window path, where `"~"` is the current window. Every other
+  spelling compiles to *"Invalid object member"*; the authoritative list of the 34 `SysFct`
+  methods is in the runtime's own unit tests under
+  `WinCCUnified/bin/_config/IOWA_*.xml`, which is faster than guessing. The
+  event enum lives at `Siemens.Engineering.HmiUnified.UI.Enum.HmiButtonEventType` and each
+  widget has its own (`HmiRectangleEventType`, `HmiTextEventType`, ...), all offering
+  `Tapped`. This is the whole mechanism behind a screen hierarchy.
+- **There is no start-screen property on V19's `HmiSoftware`.** Nothing under `Screens` /
+  `ScreenGroups` sets which screen the runtime opens on, so a generated hierarchy is
+  unreachable until someone points the start screen at it **in the GUI**. Budget for that
+  manual step, or the operator lands on whatever was configured before.
+- **`ScreenGroups` exists on V19 but reads 0** on a real project - see the note below about
+  presence of a property not proving a working API.
 - **Faceplate *types* cannot be created through Openness ON V19 - but they can on V21.**
   This is version-specific, so check the assembly you are actually bound to:
 

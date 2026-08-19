@@ -88,6 +88,15 @@ When CI fails and logs are admin-gated, read `::error::` annotations at
   with `New-TiaScreen`/`New-TiaScreenItem`/`Set-TiaScreenItemTag`. Their `Create<T>()` is
   generic (needs `MakeGenericMethod`), and item `Left`/`Top` are `Int32` while
   `Width`/`Height` are `UInt32`. Details and the rest of the traps: `docs/GUIDE.md` 11.7.
+- **On Unified, `New-TiaHmiTag` does not work** (it reports the flavor as `Object[]`) - use
+  `HmiTagTable.Tags.Create(name)`, and **never set `DataType`**: assign `Connection` then
+  `PlcTag` and TIA resolves the type, while assigning it explicitly throws "Empty data type
+  or HMI data type at tag ...". One UDT-typed tag per area makes the whole DB reachable by
+  path. Button captions are rich text like `HmiText`; navigation is
+  `EventHandlers.Create(...Tapped)` then `.Script.ScriptCode` (`Script` itself is
+  read-only), and the call is `HMIRuntime.UI.SysFct.ChangeScreen('<screen>','~')` -
+  `SysFct` not `SysFn`; the valid verbs are listed in `WinCCUnified/bin/_config/IOWA_*.xml`. **V19 exposes no start-screen property** - a generated hierarchy is
+  unreachable until the start screen is repointed in the GUI.
 - **The Openness surface differs by version - check the assembly, not your memory.** V21 is
   modular (`Siemens.Engineering.Base/.WinCC/.WinCCUnified.dll`) and adds what V19 lacks:
   `LibraryTypeComposition.CreateFromDocuments` + `FaceplateLibraryTypeVersion
